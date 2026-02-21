@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import path from 'path';
 import { createServer } from 'http';
 import { Server as SocketIO } from 'socket.io';
 import dotenv from 'dotenv';
@@ -113,6 +114,17 @@ app.post('/api/dev/credit', requireAuth, (req, res): void => {
   const amount = req.body.amount || 1000;
   marketManager.creditBalance(user.address, amount);
   res.json({ balance: marketManager.getBalance(user.address) });
+});
+
+// --- Serve built frontend (production / Replit) ---
+const clientDist = path.resolve(__dirname, '../../client/dist');
+app.use(express.static(clientDist));
+// SPA fallback: serve index.html for any non-API route
+app.get('*', (_req, res, next) => {
+  if (_req.path.startsWith('/api') || _req.path.startsWith('/auth') || _req.path.startsWith('/socket.io')) {
+    return next();
+  }
+  res.sendFile(path.join(clientDist, 'index.html'));
 });
 
 // --- Socket.IO ---

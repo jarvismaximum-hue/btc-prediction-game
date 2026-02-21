@@ -10,7 +10,7 @@ import { apiFetch } from './services/api';
 import './App.css';
 
 function AppContent() {
-  const { socketRef, connected, currentPrice, priceHistory, candles, liveCandle, market, orderbook, settledMarkets } = useSocket();
+  const { socketRef, connected, currentPrice, candles, liveCandle, market, orderbook, settledMarkets } = useSocket();
   const auth = useAuthContext();
   const [balance, setBalance] = useState(0);
   const [crediting, setCrediting] = useState(false);

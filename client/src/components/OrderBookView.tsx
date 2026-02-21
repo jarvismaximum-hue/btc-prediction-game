@@ -1,4 +1,3 @@
-import React from 'react';
 import type { OrderBookSnapshot } from '../hooks/useSocket';
 
 interface Props {

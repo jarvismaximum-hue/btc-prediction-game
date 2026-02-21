@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { createChart, CandlestickSeries } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi } from 'lightweight-charts';
+import type { IChartApi } from 'lightweight-charts';
 import type { Market } from '../hooks/useSocket';
 
 interface Props {
@@ -13,7 +13,8 @@ interface Props {
 
 // ---- Module-level chart state (survives React re-renders) ----
 let _chart: IChartApi | null = null;
-let _series: ISeriesApi<typeof CandlestickSeries> | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _series: any = null;
 let _targetLine: any = null;
 let _ro: ResizeObserver | null = null;
 let _mountedContainer: HTMLDivElement | null = null;
@@ -255,7 +256,7 @@ function ensureChart(container: HTMLDivElement) {
   return { chart, series };
 }
 
-export function PriceChart({ candles, liveCandle, currentPrice, market, socketRef }: Props) {
+export function PriceChart({ candles, liveCandle: _liveCandle, currentPrice, market, socketRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const priceDisplayRef = useRef<HTMLSpanElement>(null);
   const diffDisplayRef = useRef<HTMLDivElement>(null);
