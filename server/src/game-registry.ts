@@ -193,6 +193,37 @@ export class GameRegistry extends EventEmitter {
     return this.positions.get(userId) || [];
   }
 
+  /** Aggregate positions for a market: total UP/DOWN shares and bettor count */
+  getMarketStats(marketId: string): { upShares: number; downShares: number; bettors: number } {
+    let upShares = 0;
+    let downShares = 0;
+    const bettorSet = new Set<string>();
+    for (const [userId, positions] of this.positions.entries()) {
+      for (const pos of positions) {
+        if (pos.marketId === marketId) {
+          bettorSet.add(userId);
+          if (pos.side === 'UP') upShares += pos.shares;
+          else downShares += pos.shares;
+        }
+      }
+    }
+    return { upShares, downShares, bettors: bettorSet.size };
+  }
+
+  /** Get all positions for a specific market (all users) */
+  getMarketPositions(marketId: string): Array<{ address: string; side: Side; shares: number; avgPrice: number }> {
+    const result: Array<{ address: string; side: Side; shares: number; avgPrice: number }> = [];
+    for (const [userId, positions] of this.positions.entries()) {
+      for (const pos of positions) {
+        if (pos.marketId === marketId) {
+          const short = userId.length > 10 ? userId.slice(0, 6) + '...' + userId.slice(-4) : userId;
+          result.push({ address: short, side: pos.side, shares: pos.shares, avgPrice: pos.avgPrice });
+        }
+      }
+    }
+    return result;
+  }
+
   getUserOrders(userId: string, gameType?: string): any[] {
     const marketId = gameType ? this.currentMarkets.get(gameType) : undefined;
     if (gameType && !marketId) return [];

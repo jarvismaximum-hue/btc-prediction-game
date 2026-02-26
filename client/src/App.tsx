@@ -80,20 +80,24 @@ function AppContent() {
         </div>
       )}
 
-      <main className="arena-full">
-        <GameGrid
-          positions={myPositions}
-          isAuthenticated={auth.isAuthenticated}
-          balance={gameBalance}
-          onOrderPlaced={refreshAccount}
-        />
-      </main>
+      <div className="arena-layout">
+        <main className="arena-games">
+          <GameGrid
+            positions={myPositions}
+            isAuthenticated={auth.isAuthenticated}
+            balance={gameBalance}
+            onOrderPlaced={refreshAccount}
+          />
+        </main>
 
-      <AgentChat
-        socketRef={socketRef}
-        isAuthenticated={auth.isAuthenticated}
-        account={auth.account || null}
-      />
+        <aside className="arena-chat">
+          <AgentChat
+            socketRef={socketRef}
+            isAuthenticated={auth.isAuthenticated}
+            account={auth.account || null}
+          />
+        </aside>
+      </div>
     </div>
   );
 }

@@ -18,9 +18,9 @@ interface Props {
 export function AgentChat({ socketRef, isAuthenticated, account }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
-  const [isOpen, setIsOpen] = useState(false);
-  const [unread, setUnread] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScroll = useRef(true);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const socket = socketRef.current;
@@ -32,7 +32,6 @@ export function AgentChat({ socketRef, isAuthenticated, account }: Props) {
 
     const onMessage = (msg: ChatMessage) => {
       setMessages(prev => [...prev, msg].slice(-100));
-      if (!isOpen) setUnread(prev => prev + 1);
     };
 
     socket.on('chatHistory', onHistory);
@@ -42,15 +41,26 @@ export function AgentChat({ socketRef, isAuthenticated, account }: Props) {
       socket.off('chatHistory', onHistory);
       socket.off('chatMessage', onMessage);
     };
-  }, [socketRef, isOpen]);
+  }, [socketRef]);
 
+  // Track if user has scrolled up
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const handleScroll = () => {
+      const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+      shouldAutoScroll.current = atBottom;
+    };
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Auto-scroll on new messages
+  useEffect(() => {
+    if (shouldAutoScroll.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
-
-  useEffect(() => {
-    if (isOpen) setUnread(0);
-  }, [isOpen]);
 
   const sendMessage = () => {
     if (!input.trim() || !socketRef.current) return;
@@ -64,25 +74,15 @@ export function AgentChat({ socketRef, isAuthenticated, account }: Props) {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  if (!isOpen) {
-    return (
-      <button className="chat-fab" onClick={() => setIsOpen(true)}>
-        💬
-        {unread > 0 && <span className="chat-badge">{unread}</span>}
-      </button>
-    );
-  }
-
   return (
-    <div className="chat-panel">
-      <div className="chat-header">
-        <span className="chat-title">Agent Chat</span>
+    <div className="chat-inline">
+      <div className="chat-inline-header">
+        <span className="chat-title">Live Chat</span>
         <span className="chat-online">{messages.length > 0 ? '● Live' : ''}</span>
-        <button className="chat-close" onClick={() => setIsOpen(false)}>✕</button>
       </div>
-      <div className="chat-messages">
+      <div className="chat-inline-messages" ref={messagesContainerRef}>
         {messages.length === 0 && (
-          <div className="chat-empty">No messages yet. Say hello!</div>
+          <div className="chat-empty">No messages yet</div>
         )}
         {messages.map(msg => (
           <div key={msg.id} className={`chat-msg ${msg.isAgent ? 'agent' : 'user'}`}>

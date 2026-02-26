@@ -13,6 +13,19 @@ interface GameMarket {
   timeLeftMs: number;
 }
 
+interface MarketStats {
+  upShares: number;
+  downShares: number;
+  bettors: number;
+}
+
+interface Participant {
+  address: string;
+  side: 'UP' | 'DOWN';
+  shares: number;
+  avgPrice: number;
+}
+
 interface GameInfo {
   type: string;
   name: string;
@@ -20,6 +33,8 @@ interface GameInfo {
   icon: string;
   durationMs: number;
   currentMarket: GameMarket | null;
+  stats: MarketStats | null;
+  participants: Participant[];
 }
 
 interface Position {
@@ -165,11 +180,13 @@ export function GameGrid({ positions, isAuthenticated, balance, onOrderPlaced }:
     <div className="game-grid">
       {games.map(game => {
         const market = game.currentMarket;
+        const stats = game.stats;
         const isTrading = market?.status === 'trading';
         const isSettling = market?.status === 'settling';
         const gamePositions = getPositionsForGame(game.type, market?.id);
         const isExpanded = expandedGame === game.type;
         const hasPosition = gamePositions.length > 0;
+        const totalShares = stats ? stats.upShares + stats.downShares : 0;
 
         return (
           <div
@@ -206,18 +223,32 @@ export function GameGrid({ positions, isAuthenticated, balance, onOrderPlaced }:
               </div>
             )}
 
-            {hasPosition && (
-              <div className="game-card-positions">
-                {gamePositions.map((pos, i) => {
-                  const cost = pos.shares * pos.avgPrice;
-                  return (
-                    <div key={i} className={`game-card-position ${pos.side.toLowerCase()}`}>
-                      <span className="pos-side">{pos.side}</span>
-                      <span className="pos-shares">{pos.shares.toFixed(1)} shares</span>
-                      <span className="pos-cost">{cost.toFixed(4)} ETH</span>
-                    </div>
-                  );
-                })}
+            {/* Market activity bar */}
+            {stats && totalShares > 0 && (
+              <div className="game-card-activity">
+                <div className="activity-bar">
+                  <div className="activity-up" style={{ width: `${(stats.upShares / totalShares) * 100}%` }} />
+                  <div className="activity-down" style={{ width: `${(stats.downShares / totalShares) * 100}%` }} />
+                </div>
+                <div className="activity-labels">
+                  <span className="activity-up-label">{stats.upShares.toFixed(0)} UP</span>
+                  <span className="activity-bettors">{stats.bettors} bettor{stats.bettors !== 1 ? 's' : ''}</span>
+                  <span className="activity-down-label">{stats.downShares.toFixed(0)} DOWN</span>
+                </div>
+              </div>
+            )}
+
+            {/* All participant positions */}
+            {game.participants.length > 0 && (
+              <div className="game-card-participants">
+                <div className="participants-label">Positions</div>
+                {game.participants.map((p, i) => (
+                  <div key={i} className={`participant-row ${p.side.toLowerCase()}`}>
+                    <span className="participant-addr">{p.address}</span>
+                    <span className={`participant-side ${p.side.toLowerCase()}`}>{p.side}</span>
+                    <span className="participant-shares">{p.shares.toFixed(1)}</span>
+                  </div>
+                ))}
               </div>
             )}
 

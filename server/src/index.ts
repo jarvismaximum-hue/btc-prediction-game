@@ -236,6 +236,8 @@ app.post('/api/keys/revoke', requireAuth, async (req, res) => {
 app.get('/api/games', (_req, res) => {
   const games = gameRegistry.getGames().map(g => {
     const market = gameRegistry.getCurrentMarket(g.type);
+    const stats = market ? gameRegistry.getMarketStats(market.id) : null;
+    const participants = market ? gameRegistry.getMarketPositions(market.id) : [];
     return {
       type: g.type,
       name: g.name,
@@ -253,6 +255,8 @@ app.get('/api/games', (_req, res) => {
         endTime: market.endTime,
         timeLeftMs: Math.max(0, market.endTime - Date.now()),
       } : null,
+      stats,
+      participants,
     };
   });
   res.json(games);
