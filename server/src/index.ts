@@ -12,6 +12,7 @@ import { GalaChainService } from './galachain';
 import { GameRegistry } from './game-registry';
 import { createBtcGame, createEthGame, createSpyGame, createWeatherGame } from './game-engines';
 import { createNewGameEngines } from './game-engines-new';
+import { startBots } from './bots';
 import { createAuthRouter, requireAuth } from './auth';
 import { initDb, getRecentSettledMarkets } from './db';
 import { initApiKeys, createApiKeysTable, generateApiKey, listApiKeys, revokeApiKey } from './api-keys';
@@ -828,6 +829,12 @@ async function start() {
       console.log('[Server] Price feed connected, starting market cycles');
       marketManager.startCycle();
       gameRegistry.startAll();
+      // Start trading bots after a short delay to let markets initialize
+      setTimeout(() => {
+        startBots(gameRegistry, io, addChatMessage).catch(err => {
+          console.error('[Bots] Failed to start:', err);
+        });
+      }, 5000);
     });
   });
 }
