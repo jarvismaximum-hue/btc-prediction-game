@@ -60,6 +60,10 @@ export class OrderBook {
     return [...this.trades];
   }
 
+  getUserOrders(userId: string): Order[] {
+    return [...this.bids, ...this.asks].filter(o => o.userId === userId);
+  }
+
   placeOrder(userId: string, side: Side, price: number, shares: number): { order: Order; trades: Trade[] } {
     if (price < 0.01 || price > 0.99) throw new Error('Price must be between 0.01 and 0.99');
     if (shares <= 0) throw new Error('Shares must be positive');

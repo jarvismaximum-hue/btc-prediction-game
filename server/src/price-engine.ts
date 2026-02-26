@@ -113,9 +113,9 @@ export class PriceEngine extends EventEmitter {
       this.currentCandle.close = price;
       this.currentCandle.volume += volume;
     }
-    // Throttle candleUpdate to ~10/sec — client interpolates between updates
+    // Throttle candleUpdate to ~4/sec — client buffers via rAF
     const now = Date.now();
-    if (now - this.lastCandleUpdateEmit >= 100) {
+    if (now - this.lastCandleUpdateEmit >= 250) {
       this.lastCandleUpdateEmit = now;
       this.emit('candleUpdate', { ...this.currentCandle });
     }

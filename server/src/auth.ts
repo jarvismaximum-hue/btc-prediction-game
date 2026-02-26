@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { verifyMessage, getAddress } from 'ethers';
+import { validateApiKey } from './api-keys';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'btc-prediction-game-dev-secret-change-in-production';
 const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -23,7 +24,7 @@ function generateNonce(): string {
 
 function buildAuthMessage(address: string, nonce: string): string {
   return [
-    'Sign in to BTC Prediction Game',
+    'Sign in to ProfitPlay Agent Arena',
     '',
     `Address: ${address}`,
     `Nonce: ${nonce}`,
@@ -33,9 +34,10 @@ function buildAuthMessage(address: string, nonce: string): string {
   ].join('\n');
 }
 
-function normalizeAddress(addr: string): string {
-  const raw = addr.startsWith('eth|') ? `0x${addr.slice(4)}` : addr;
-  return getAddress(raw); // checksum
+/** Normalize any address to checksummed 0x format */
+function toChecksumAddress(addr: string): string {
+  const raw = addr.startsWith('0x') ? addr : `0x${addr}`;
+  return getAddress(raw);
 }
 
 export function createAuthRouter(): Router {
@@ -48,16 +50,16 @@ export function createAuthRouter(): Router {
       return res.status(400).json({ error: 'Missing address' });
     }
 
-    let normalized: string;
+    let checksummed: string;
     try {
-      normalized = normalizeAddress(address);
+      checksummed = toChecksumAddress(address);
     } catch {
       return res.status(400).json({ error: 'Invalid Ethereum address' });
     }
 
     const nonce = generateNonce();
-    const message = buildAuthMessage(normalized, nonce);
-    nonceStore.set(normalized.toLowerCase(), { nonce, expiresAt: Date.now() + NONCE_TTL_MS });
+    const message = buildAuthMessage(checksummed, nonce);
+    nonceStore.set(checksummed.toLowerCase(), { nonce, expiresAt: Date.now() + NONCE_TTL_MS });
 
     return res.json({ nonce, message });
   });
@@ -69,9 +71,9 @@ export function createAuthRouter(): Router {
       return res.status(400).json({ error: 'address, message, and signature required' });
     }
 
-    let normalized: string;
+    let checksummed: string;
     try {
-      normalized = normalizeAddress(address);
+      checksummed = toChecksumAddress(address);
     } catch {
       return res.status(400).json({ error: 'Invalid address format' });
     }
@@ -82,7 +84,7 @@ export function createAuthRouter(): Router {
     }
 
     // Check nonce
-    const key = normalized.toLowerCase();
+    const key = checksummed.toLowerCase();
     const stored = nonceStore.get(key);
     if (!stored || stored.expiresAt < Date.now()) {
       return res.status(401).json({ error: 'Nonce expired or not found' });
@@ -94,7 +96,7 @@ export function createAuthRouter(): Router {
     // Verify signature
     try {
       const recovered = verifyMessage(message, signature);
-      if (recovered.toLowerCase() !== normalized.toLowerCase()) {
+      if (recovered.toLowerCase() !== checksummed.toLowerCase()) {
         return res.status(401).json({ error: 'Signature verification failed' });
       }
     } catch {
@@ -104,32 +106,54 @@ export function createAuthRouter(): Router {
     // Consume nonce
     nonceStore.delete(key);
 
-    // Issue JWT
+    // Issue JWT with checksummed 0x address
     const token = jwt.sign(
-      { sub: normalized, address: normalized },
+      { sub: checksummed, address: checksummed },
       JWT_SECRET,
       { expiresIn: '7d' },
     );
 
-    return res.json({ accessToken: token, address: normalized });
+    return res.json({ accessToken: token, address: checksummed });
   });
 
   return router;
 }
 
-/** JWT auth middleware */
+/** JWT or API key auth middleware */
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const auth = req.headers.authorization;
-  if (!auth?.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Missing Authorization header' });
+  if (!auth) {
+    res.status(401).json({ error: 'Missing Authorization header. Use "Bearer <jwt>" or "ApiKey <key>"' });
     return;
   }
 
-  try {
-    const payload = jwt.verify(auth.slice(7), JWT_SECRET) as any;
-    (req as any).user = payload;
-    next();
-  } catch {
-    res.status(401).json({ error: 'Invalid or expired token' });
+  // API key auth: "ApiKey pp_..."
+  if (auth.startsWith('ApiKey ')) {
+    const key = auth.slice(7);
+    validateApiKey(key).then(address => {
+      if (!address) {
+        res.status(401).json({ error: 'Invalid or revoked API key' });
+        return;
+      }
+      (req as any).user = { sub: address, address, authMethod: 'apikey' };
+      next();
+    }).catch(() => {
+      res.status(401).json({ error: 'API key validation failed' });
+    });
+    return;
   }
+
+  // JWT auth: "Bearer <token>"
+  if (auth.startsWith('Bearer ')) {
+    try {
+      const payload = jwt.verify(auth.slice(7), JWT_SECRET) as any;
+      (req as any).user = payload;
+      next();
+    } catch {
+      res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    return;
+  }
+
+  res.status(401).json({ error: 'Invalid Authorization format. Use "Bearer <jwt>" or "ApiKey <key>"' });
 }

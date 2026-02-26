@@ -22,28 +22,10 @@ let _lastMarketId: string | null = null;
 let _targetOverlay: HTMLDivElement | null = null;
 let _targetRafId: number | null = null;
 let _targetPrice: number | null = null;
-
-// ---- Buffered candle queue ----
-let _candleQueue: any[] = [];
-let _renderInterval: ReturnType<typeof setInterval> | null = null;
-let _lastRenderedTime = 0;
-
-function startCadenceRenderer() {
-  if (_renderInterval) return;
-  const now = Date.now();
-  const nextSecond = Math.ceil(now / 1000) * 1000;
-  const delay = nextSecond - now;
-  setTimeout(() => {
-    renderNextCandle();
-    _renderInterval = setInterval(renderNextCandle, 1000);
-  }, delay);
-}
-
-function renderNextCandle() {
-  if (!_series || _candleQueue.length === 0) return;
-  const candle = _candleQueue.shift()!;
-  if (candle.time <= _lastRenderedTime) return;
-  _lastRenderedTime = candle.time;
+// Direct update helper — no queue, no cadence renderer.
+// lightweight-charts handles same-time updates by replacing the candle in-place.
+function updateCandle(candle: { time: number; open: number; high: number; low: number; close: number }) {
+  if (!_series) return;
   try {
     _series.update({
       time: candle.time as any,
@@ -53,14 +35,6 @@ function renderNextCandle() {
       close: candle.close,
     });
   } catch {}
-  try { _chart?.timeScale().scrollToRealTime(); } catch {}
-}
-
-function stopCadenceRenderer() {
-  if (_renderInterval) {
-    clearInterval(_renderInterval);
-    _renderInterval = null;
-  }
 }
 
 // ---- Target price overlay ----
@@ -250,7 +224,6 @@ function ensureChart(container: HTMLDivElement) {
   _mountedContainer = container;
 
   createTargetOverlay(container);
-  startCadenceRenderer();
   startTargetOverlayLoop();
 
   return { chart, series };
@@ -262,27 +235,30 @@ export function PriceChart({ candles, liveCandle: _liveCandle, currentPrice, mar
   const diffDisplayRef = useRef<HTMLDivElement>(null);
   const lastPriceRef = useRef(0);
   const flashTimeoutRef = useRef<number>(0);
-  const initDataLoaded = useRef(false);
+  const marketRef = useRef(market);
+
+  // Keep marketRef always current so socket handlers can read latest values
+  useEffect(() => { marketRef.current = market; }, [market]);
+
 
   // Initialize chart once
   useEffect(() => {
     if (!containerRef.current) return;
     ensureChart(containerRef.current);
     return () => {
-      stopCadenceRenderer();
       stopTargetOverlayLoop();
     };
   }, []);
 
-  // Seed historical candle data (bulk load on connect)
+  // Seed chart from candleHistory. This runs on initial connect AND reconnect.
+  // candles state only changes from candleHistory events (not individual candle events).
   useEffect(() => {
     if (!_series || candles.length === 0) return;
-    if (initDataLoaded.current) return;
-    initDataLoaded.current = true;
 
     const sorted = candles
       .slice()
       .sort((a: any, b: any) => a.time - b.time)
+      .filter((c: any) => c.open != null && c.high != null && c.low != null && c.close != null)
       .map((c: any) => ({
         time: c.time as any,
         open: c.open,
@@ -291,28 +267,49 @@ export function PriceChart({ candles, liveCandle: _liveCandle, currentPrice, mar
         close: c.close,
       }));
 
-    if (sorted.length > 0) {
-      try { _series.setData(sorted); } catch {}
-      _lastRenderedTime = sorted[sorted.length - 1].time;
-    }
+    if (sorted.length === 0) return;
 
+    try { _series.setData(sorted); } catch {}
     try { _chart?.timeScale().scrollToRealTime(); } catch {}
   }, [candles]);
 
-  // Socket listeners — queue completed candles and update price display
+  // Socket listeners — poll for socketRef.current since it may not be set on first render.
+  // Once attached, stays attached until unmount.
   useEffect(() => {
-    const socket = socketRef?.current;
-    if (!socket) return;
+    let pendingCandle: any = null;
+    let rafId: number | null = null;
+    let attached = false;
+    let pollId: ReturnType<typeof setInterval> | null = null;
+    let currentSocket: any = null;
+
+    const flushCandle = () => {
+      rafId = null;
+      if (pendingCandle && _series) {
+        try {
+          _series.update({
+            time: pendingCandle.time as any,
+            open: pendingCandle.open,
+            high: pendingCandle.high,
+            low: pendingCandle.low,
+            close: pendingCandle.close,
+          });
+        } catch {}
+        pendingCandle = null;
+      }
+    };
 
     const handleCandle = (candle: any) => {
-      if (!candle) return;
-      _candleQueue.push({
-        time: candle.time,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-      });
+      if (!candle || candle.open == null || candle.close == null) return;
+      updateCandle(candle);
+      try { _chart?.timeScale().scrollToRealTime(); } catch {}
+    };
+
+    const handleCandleUpdate = (candle: any) => {
+      if (!candle || candle.open == null || candle.close == null) return;
+      pendingCandle = candle;
+      if (rafId === null) {
+        rafId = requestAnimationFrame(flushCandle);
+      }
     };
 
     const handleTick = (tick: { price: number; timestamp: number }) => {
@@ -337,23 +334,43 @@ export function PriceChart({ candles, liveCandle: _liveCandle, currentPrice, mar
         lastPriceRef.current = tick.price;
       }
 
-      if (diffDisplayRef.current && market) {
-        const diff = tick.price - market.openPrice;
-        const pct = market.openPrice > 0 ? (diff / market.openPrice) * 100 : 0;
+      const m = marketRef.current;
+      if (diffDisplayRef.current && m) {
+        const diff = tick.price - m.openPrice;
+        const pct = m.openPrice > 0 ? (diff / m.openPrice) * 100 : 0;
         const isUp = diff >= 0;
         diffDisplayRef.current.className = `price-diff ${isUp ? 'up' : 'down'}`;
         diffDisplayRef.current.textContent = `${isUp ? '+' : ''}${diff.toFixed(2)} (${isUp ? '+' : ''}${pct.toFixed(3)}%)`;
       }
     };
 
-    socket.on('candle', handleCandle);
-    socket.on('priceTick', handleTick);
+    function tryAttach() {
+      const socket = socketRef?.current;
+      if (!socket || attached) return;
+      attached = true;
+      currentSocket = socket;
+      if (pollId) { clearInterval(pollId); pollId = null; }
+      socket.on('candle', handleCandle);
+      socket.on('candleUpdate', handleCandleUpdate);
+      socket.on('priceTick', handleTick);
+    }
+
+    // Try immediately, then poll every 100ms until socket is available
+    tryAttach();
+    if (!attached) {
+      pollId = setInterval(tryAttach, 100);
+    }
 
     return () => {
-      socket.off('candle', handleCandle);
-      socket.off('priceTick', handleTick);
+      if (pollId) clearInterval(pollId);
+      if (currentSocket) {
+        currentSocket.off('candle', handleCandle);
+        currentSocket.off('candleUpdate', handleCandleUpdate);
+        currentSocket.off('priceTick', handleTick);
+      }
+      if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [socketRef?.current, market?.openPrice]);
+  }, []);
 
   // Target price line + overlay tracking
   useEffect(() => {

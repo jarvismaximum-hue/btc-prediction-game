@@ -1,95 +1,99 @@
 import { useState, useEffect } from 'react';
-import { useSocket } from './hooks/useSocket';
 import { AuthProvider, useAuthContext } from './contexts/AuthContext';
-import { PriceChart } from './components/PriceChart';
-import { BettingPanel } from './components/BettingPanel';
-import { OrderBookView } from './components/OrderBookView';
 import { WalletConnect } from './components/WalletConnect';
-import { MarketHistory } from './components/MarketHistory';
+import { DepositPanel } from './components/DepositPanel';
+import { GameGrid } from './components/GameGrid';
+import { AgentChat } from './components/AgentChat';
+import { useSocket } from './hooks/useSocket';
 import { apiFetch } from './services/api';
 import './App.css';
 
 function AppContent() {
-  const { socketRef, connected, currentPrice, candles, liveCandle, market, orderbook, settledMarkets } = useSocket();
   const auth = useAuthContext();
-  const [balance, setBalance] = useState(0);
-  const [crediting, setCrediting] = useState(false);
+  const { socketRef } = useSocket();
+  const [gameBalance, setGameBalance] = useState(0);
+  const [myPositions, setMyPositions] = useState<any[]>([]);
+  const [showWallet, setShowWallet] = useState(false);
 
   useEffect(() => {
     if (!auth.isAuthenticated) return;
-    const fetchBalance = async () => {
+    const fetchAccount = async () => {
       try {
         const res = await apiFetch('/api/account');
         if (res.ok) {
           const data = await res.json();
-          setBalance(data.balance || 0);
+          setGameBalance(data.balance || 0);
+          setMyPositions(data.positions || []);
         }
       } catch {}
     };
-    fetchBalance();
-    const interval = setInterval(fetchBalance, 5000);
+    fetchAccount();
+    const interval = setInterval(fetchAccount, 3000);
     return () => clearInterval(interval);
   }, [auth.isAuthenticated]);
 
-  const handleCreditBalance = async () => {
-    setCrediting(true);
-    try {
-      const res = await apiFetch('/api/dev/credit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: 1000 }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setBalance(data.balance || 0);
-      }
-    } catch {} finally {
-      setCrediting(false);
-    }
-  };
-
-  const refreshBalance = async () => {
+  const refreshAccount = async () => {
     try {
       const res = await apiFetch('/api/account');
       if (res.ok) {
         const data = await res.json();
-        setBalance(data.balance || 0);
+        setGameBalance(data.balance || 0);
+        setMyPositions(data.positions || []);
       }
     } catch {}
+    auth.fetchOnChainBalance();
   };
 
   return (
     <div className="app">
       <header className="header">
         <div className="header-left">
-          <h1 className="logo">BTC Predict</h1>
-          <span className={`connection-status ${connected ? 'online' : 'offline'}`}>
-            {connected ? 'LIVE' : 'CONNECTING...'}
-          </span>
+          <h1 className="logo">ProfitPlay</h1>
+          <span className="logo-sub">Agent Arena</span>
         </div>
         <div className="header-right">
+          <a href="/docs" className="docs-link">API Docs</a>
           {auth.isAuthenticated && (
-            <div className="balance-header">
-              <span className="balance-amount">{balance.toFixed(2)} GALA</span>
-              <button className="btn btn-xs" onClick={handleCreditBalance} disabled={crediting}>
-                {crediting ? '...' : '+1000 (Dev)'}
-              </button>
-            </div>
+            <button className="balance-btn" onClick={() => setShowWallet(!showWallet)}>
+              <span className="balance-amount">{gameBalance.toFixed(4)} ETH</span>
+              <span className="balance-onchain">
+                {auth.ethUsdPrice > 0
+                  ? `$${((auth.onChainBalance + auth.mainnetBalance) * auth.ethUsdPrice).toFixed(2)}`
+                  : `${(auth.onChainBalance + auth.mainnetBalance).toFixed(4)} wallet`}
+              </span>
+            </button>
           )}
           <WalletConnect />
         </div>
       </header>
 
-      <main className="main-layout">
-        <div className="left-panel">
-          <PriceChart candles={candles} liveCandle={liveCandle} currentPrice={currentPrice} market={market} socketRef={socketRef} />
-          <MarketHistory markets={settledMarkets} />
+      {showWallet && auth.isAuthenticated && (
+        <div className="wallet-dropdown">
+          <DepositPanel
+            onChainBalance={auth.onChainBalance}
+            mainnetBalance={auth.mainnetBalance}
+            ethUsdPrice={auth.ethUsdPrice}
+            gameBalance={gameBalance}
+            depositToGame={auth.depositToGame}
+            onBalanceChanged={() => { refreshAccount(); setShowWallet(false); }}
+          />
         </div>
-        <div className="right-panel">
-          <BettingPanel market={market} isAuthenticated={auth.isAuthenticated} balance={balance} onOrderPlaced={refreshBalance} />
-          <OrderBookView orderbook={orderbook} />
-        </div>
+      )}
+
+      <main className="arena-full">
+        <GameGrid
+          positions={myPositions}
+          isAuthenticated={auth.isAuthenticated}
+          balance={gameBalance}
+          onOrderPlaced={refreshAccount}
+        />
       </main>
+
+      <AgentChat
+        socketRef={socketRef}
+        isAuthenticated={auth.isAuthenticated}
+        account={auth.account || null}
+      />
     </div>
   );
 }

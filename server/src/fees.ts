@@ -5,7 +5,7 @@
  *   - Approaches 0% at extremes (p near 0 or 1)
  * - Maker fee: 0% (makers add liquidity to order book)
  * - Maker rebate: 20% of taker fees redistributed to makers
- * - Platform fee: 1% flat on all GALA transactions
+ * - Platform fee: 5% flat on all ETH transactions
  */
 
 export interface FeeBreakdown {
@@ -27,7 +27,7 @@ export function calcTakerFee(shares: number, probability: number): number {
 export function calcFees(shares: number, pricePerShare: number, isMaker: boolean): FeeBreakdown {
   const probability = Math.max(0.01, Math.min(0.99, pricePerShare));
   const grossAmount = shares * pricePerShare;
-  const platformFee = grossAmount * 0.01; // 1% flat
+  const platformFee = grossAmount * 0.05; // 5% flat
 
   if (isMaker) {
     // Makers pay no trading fee, receive rebate from taker fees (handled at match time)

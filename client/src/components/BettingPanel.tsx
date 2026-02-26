@@ -32,9 +32,10 @@ interface Props {
   isAuthenticated: boolean;
   balance: number;
   onOrderPlaced: () => void;
+  selectedGame?: string;
 }
 
-export function BettingPanel({ market, isAuthenticated, balance, onOrderPlaced }: Props) {
+export function BettingPanel({ market, isAuthenticated, balance, onOrderPlaced, selectedGame = 'btc-5min' }: Props) {
   const [side, setSide] = useState<'UP' | 'DOWN'>('UP');
   const [shares, setShares] = useState<number>(10);
   const [price, setPrice] = useState<number>(0.5);
@@ -51,7 +52,7 @@ export function BettingPanel({ market, isAuthenticated, balance, onOrderPlaced }
   // Polymarket taker fee: shares * 0.25 * (p*(1-p))^2
   const p = Math.max(0.01, Math.min(0.99, price));
   const takerFee = shares * 0.25 * Math.pow(p * (1 - p), 2);
-  const platformFee = estimatedCost * 0.01;
+  const platformFee = estimatedCost * 0.05;
   const totalCost = estimatedCost + takerFee + platformFee;
 
   const handleSubmit = async () => {
@@ -61,7 +62,7 @@ export function BettingPanel({ market, isAuthenticated, balance, onOrderPlaced }
     setSuccess(null);
 
     try {
-      const res = await apiFetch('/api/order', {
+      const res = await apiFetch(`/api/games/${selectedGame}/bet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ side, price, shares }),
@@ -96,7 +97,7 @@ export function BettingPanel({ market, isAuthenticated, balance, onOrderPlaced }
 
       {market && market.status === 'trading' && (
         <div className="target-price">
-          Target: <strong>${market.openPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+          {(market as any).title || `Target: ${((market as any).openValue ?? (market as any).openPrice)?.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
         </div>
       )}
 
@@ -136,29 +137,29 @@ export function BettingPanel({ market, isAuthenticated, balance, onOrderPlaced }
           value={price}
           onChange={e => setPrice(parseFloat(e.target.value))}
         />
-        <div className="price-display">{price.toFixed(2)} GALA/share</div>
+        <div className="price-display">{price.toFixed(4)} ETH/share</div>
       </div>
 
       <div className="cost-breakdown">
         <div className="cost-row">
           <span>Cost</span>
-          <span>{estimatedCost.toFixed(4)} GALA</span>
+          <span>{estimatedCost.toFixed(6)} ETH</span>
         </div>
         <div className="cost-row">
           <span>Taker Fee</span>
-          <span>{takerFee.toFixed(4)} GALA</span>
+          <span>{takerFee.toFixed(6)} ETH</span>
         </div>
         <div className="cost-row">
-          <span>Platform Fee (1%)</span>
-          <span>{platformFee.toFixed(4)} GALA</span>
+          <span>Platform Fee (5%)</span>
+          <span>{platformFee.toFixed(6)} ETH</span>
         </div>
         <div className="cost-row total">
           <span>Total</span>
-          <span>{totalCost.toFixed(4)} GALA</span>
+          <span>{totalCost.toFixed(6)} ETH</span>
         </div>
         <div className="cost-row potential">
           <span>Potential Payout</span>
-          <span className="payout">{shares.toFixed(2)} GALA</span>
+          <span className="payout">{shares.toFixed(6)} ETH</span>
         </div>
       </div>
 
@@ -173,14 +174,18 @@ export function BettingPanel({ market, isAuthenticated, balance, onOrderPlaced }
           ? 'Placing...'
           : market?.status !== 'trading'
           ? 'Market Closed'
-          : `Bet ${side} - ${totalCost.toFixed(2)} GALA`}
+          : balance <= 0
+          ? 'Deposit ETH to Bet'
+          : balance < totalCost
+          ? 'Insufficient Balance'
+          : `Bet ${side} - ${totalCost.toFixed(6)} ETH`}
       </button>
 
       {error && <div className="error-text">{error}</div>}
       {success && <div className="success-text">{success}</div>}
 
       <div className="balance-display">
-        Balance: <strong>{balance.toFixed(2)} GALA</strong>
+        Balance: <strong>{balance.toFixed(6)} ETH</strong>
       </div>
     </div>
   );

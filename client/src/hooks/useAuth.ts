@@ -1,22 +1,25 @@
-import { useState, useCallback } from 'react';
-import { useMetaMask } from './useMetaMask';
-import type { EIP6963ProviderDetail } from './useSyncProviders';
+import { useState, useCallback, useEffect } from 'react';
+import { useEthereum } from './useEthereum';
 import { apiFetch } from '../services/api';
 
 const TOKEN_KEY = 'btc-prediction-token';
 
 export function useAuth() {
-  const metamask = useMetaMask();
+  const eth = useEthereum();
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
+  const [serverAddress, setServerAddress] = useState<string | null>(() => localStorage.getItem('btc-prediction-address'));
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
-  const signIn = useCallback(async (providerDetail?: EIP6963ProviderDetail) => {
-    let addr: string | null;
-    if (providerDetail) {
-      addr = await metamask.connect(providerDetail);
-    } else {
-      addr = await metamask.connectLegacy();
+  // Auto-reconnect MetaMask on page refresh if we have a stored token.
+  // This ensures on-chain balance is fetched immediately.
+  useEffect(() => {
+    if (token && !eth.ethAddress && !eth.connecting) {
+      eth.connect().catch(() => {});
     }
+  }, []);
+
+  const signIn = useCallback(async () => {
+    const addr = await eth.connect();
     if (!addr) return;
 
     setIsAuthenticating(true);
@@ -26,8 +29,8 @@ export function useAuth() {
       if (!nonceRes.ok) throw new Error('Failed to get nonce');
       const { message } = await nonceRes.json();
 
-      // Sign
-      const sig = await metamask.signMessage(message);
+      // Sign with MetaMask
+      const sig = await eth.signMessage(message);
       if (!sig) return;
 
       // Login
@@ -40,28 +43,40 @@ export function useAuth() {
         const err = await loginRes.json();
         throw new Error(err.error || 'Login failed');
       }
-      const { accessToken } = await loginRes.json();
+      const { accessToken, address: srvAddress } = await loginRes.json();
       localStorage.setItem(TOKEN_KEY, accessToken);
+      localStorage.setItem('btc-prediction-address', srvAddress);
       setToken(accessToken);
+      setServerAddress(srvAddress);
     } catch (e) {
       console.error('Auth error:', e);
     } finally {
       setIsAuthenticating(false);
     }
-  }, [metamask]);
+  }, [eth]);
 
   const signOut = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem('btc-prediction-address');
     setToken(null);
-    metamask.disconnect();
-  }, [metamask]);
+    setServerAddress(null);
+    eth.disconnect();
+  }, [eth]);
 
   return {
-    ...metamask,
+    account: serverAddress || eth.ethAddress,
+    ethAddress: eth.ethAddress,
+    onChainBalance: eth.onChainBalance,
+    mainnetBalance: eth.mainnetBalance,
+    ethUsdPrice: eth.ethUsdPrice,
     token,
     isAuthenticated: !!token,
     isAuthenticating,
+    connecting: eth.connecting,
+    error: eth.error,
     signIn,
     signOut,
+    depositToGame: eth.depositToGame,
+    fetchOnChainBalance: eth.fetchBalance,
   };
 }

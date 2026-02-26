@@ -1,15 +1,18 @@
 /**
- * GalaChain integration for GALA token transfers.
- * Uses @gala-chain/connect for wallet operations and @gala-chain/api for DTOs.
- * Falls back to mock mode if GalaChain is unavailable.
+ * Base chain native transfer integration.
+ * Uses ethers.js for server-side ETH transfers (withdrawals) on Base L2.
+ * Falls back to mock mode if ETH_MOCK=true.
+ *
+ * Deposits: user sends ETH on Base to platform wallet via MetaMask.
+ * Withdrawals: server sends ETH on Base from platform wallet back to user.
  */
 
-export interface GalaConfig {
-  channelName: string;
-  chaincodeName: string;
-  contractName: string;
-  apiUrl: string;
-  platformWallet: string; // address where platform fees are collected
+import { Wallet, JsonRpcProvider, parseEther, formatEther } from 'ethers';
+
+export interface EthConfig {
+  rpcUrl: string;
+  platformWallet: string;
+  platformPrivateKey: string;
   mockMode: boolean;
 }
 
@@ -25,13 +28,11 @@ export interface BalanceResult {
   available: number;
 }
 
-const DEFAULT_CONFIG: GalaConfig = {
-  channelName: 'product-channel',
-  chaincodeName: 'basic-product',
-  contractName: 'GalaChainToken',
-  apiUrl: process.env.GALACHAIN_API_URL || 'https://gateway.galachain.com',
-  platformWallet: process.env.PLATFORM_WALLET || '',
-  mockMode: process.env.GALACHAIN_MOCK !== 'false', // default to mock
+const DEFAULT_CONFIG: EthConfig = {
+  rpcUrl: process.env.ETH_RPC_URL || 'https://mainnet.base.org',
+  platformWallet: process.env.PLATFORM_WALLET || '0x522769cB379cb7DF64Da1FEe299A207107de97c1',
+  platformPrivateKey: process.env.PLATFORM_PRIVATE_KEY || '',
+  mockMode: process.env.ETH_MOCK === 'true' || process.env.GALACHAIN_MOCK === 'true',
 };
 
 // In-memory balances for mock mode
@@ -39,12 +40,20 @@ const mockBalances = new Map<string, number>();
 const mockTxLog: Array<{ from: string; to: string; amount: number; txId: string; timestamp: number }> = [];
 
 export class GalaChainService {
-  private config: GalaConfig;
+  private config: EthConfig;
+  private wallet: Wallet | null = null;
+  private provider: JsonRpcProvider | null = null;
 
-  constructor(config?: Partial<GalaConfig>) {
+  constructor(config?: Partial<EthConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     if (this.config.mockMode) {
-      console.log('[GalaChain] Running in MOCK mode');
+      console.log('[Base] Running in MOCK mode');
+    } else if (this.config.platformPrivateKey) {
+      this.provider = new JsonRpcProvider(this.config.rpcUrl);
+      this.wallet = new Wallet(this.config.platformPrivateKey, this.provider);
+      console.log(`[Base] LIVE mode — platform wallet: ${this.config.platformWallet}`);
+    } else {
+      console.warn('[Base] LIVE mode but no PLATFORM_PRIVATE_KEY — withdrawals will fail');
     }
   }
 
@@ -56,7 +65,7 @@ export class GalaChainService {
     return this.config.platformWallet;
   }
 
-  /** Deposit GALA into user's game balance (mock: just credit) */
+  /** Deposit: verify on-chain tx before crediting balance */
   async deposit(userId: string, amount: number): Promise<TransferResult> {
     if (this.config.mockMode) {
       const current = mockBalances.get(userId) || 0;
@@ -65,10 +74,47 @@ export class GalaChainService {
       mockTxLog.push({ from: 'external', to: userId, amount, txId, timestamp: Date.now() });
       return { success: true, txId };
     }
-    return this.transferToken(userId, this.config.platformWallet, amount, 'deposit');
+    return { success: true, txId: `deposit-ack-${Date.now()}` };
   }
 
-  /** Withdraw GALA from user's game balance */
+  /** Verify an on-chain deposit tx (Base L2) — checks recipient, amount, and confirmation */
+  async verifyDeposit(txHash: string, expectedFrom: string, expectedAmount: number): Promise<{ verified: boolean; actualAmount?: number; error?: string }> {
+    if (this.config.mockMode) {
+      return { verified: true, actualAmount: expectedAmount };
+    }
+    if (!this.provider) {
+      return { verified: false, error: 'No RPC provider configured' };
+    }
+    try {
+      const receipt = await this.provider.getTransactionReceipt(txHash);
+      if (!receipt || receipt.status !== 1) {
+        return { verified: false, error: 'Transaction not found or failed' };
+      }
+      const tx = await this.provider.getTransaction(txHash);
+      if (!tx) {
+        return { verified: false, error: 'Transaction not found' };
+      }
+      // Verify recipient is the platform wallet
+      if (tx.to?.toLowerCase() !== this.config.platformWallet.toLowerCase()) {
+        return { verified: false, error: 'Transaction recipient is not the platform wallet' };
+      }
+      // Verify sender matches the depositor
+      if (tx.from.toLowerCase() !== expectedFrom.toLowerCase()) {
+        return { verified: false, error: 'Transaction sender does not match depositor' };
+      }
+      // Get actual ETH amount
+      const actualAmount = parseFloat(formatEther(tx.value));
+      // Allow 1% tolerance for gas estimation differences
+      if (actualAmount < expectedAmount * 0.99) {
+        return { verified: false, error: `Amount mismatch: expected ${expectedAmount} ETH, got ${actualAmount} ETH` };
+      }
+      return { verified: true, actualAmount };
+    } catch (err: any) {
+      return { verified: false, error: `Verification failed: ${err.message}` };
+    }
+  }
+
+  /** Withdraw: server sends ETH to user */
   async withdraw(userId: string, amount: number): Promise<TransferResult> {
     if (this.config.mockMode) {
       const current = mockBalances.get(userId) || 0;
@@ -78,10 +124,10 @@ export class GalaChainService {
       mockTxLog.push({ from: userId, to: 'external', amount, txId, timestamp: Date.now() });
       return { success: true, txId };
     }
-    return this.transferToken(this.config.platformWallet, userId, amount, 'withdraw');
+    return this.sendEth(userId, amount);
   }
 
-  /** Internal transfer between game wallets */
+  /** Internal transfer (mock only — on-chain just uses sendEth) */
   async internalTransfer(from: string, to: string, amount: number): Promise<TransferResult> {
     if (this.config.mockMode) {
       const fromBal = mockBalances.get(from) || 0;
@@ -92,10 +138,10 @@ export class GalaChainService {
       mockTxLog.push({ from, to, amount, txId, timestamp: Date.now() });
       return { success: true, txId };
     }
-    return this.transferToken(from, to, amount, 'internal');
+    return this.sendEth(to, amount);
   }
 
-  /** Get user's GALA balance */
+  /** Get user's on-chain ETH balance */
   async getBalance(userId: string): Promise<BalanceResult> {
     if (this.config.mockMode) {
       const bal = mockBalances.get(userId) || 0;
@@ -103,37 +149,24 @@ export class GalaChainService {
     }
 
     try {
-      const response = await fetch(`${this.config.apiUrl}/api/${this.config.channelName}/${this.config.chaincodeName}/FetchBalances`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          owner: userId,
-          collection: 'GALA',
-          category: 'Unit',
-          type: 'none',
-          additionalKey: 'none',
-        }),
-      });
-      const data: any = await response.json();
-      if (data.Data && data.Data.length > 0) {
-        const total = data.Data.reduce((sum: number, b: any) => sum + parseFloat(b.quantity || '0'), 0);
-        const locked = data.Data.reduce((sum: number, b: any) => sum + parseFloat(b.lockedHolds?.[0]?.quantity || '0'), 0);
-        return { balance: total, locked, available: total - locked };
+      if (!this.provider) {
+        return { balance: 0, locked: 0, available: 0 };
       }
-      return { balance: 0, locked: 0, available: 0 };
+      const bal = await this.provider.getBalance(userId);
+      const ethBal = parseFloat(formatEther(bal));
+      return { balance: ethBal, locked: 0, available: ethBal };
     } catch (err) {
-      console.error('[GalaChain] FetchBalances error:', err);
+      console.error('[Base] getBalance error:', err);
       return { balance: 0, locked: 0, available: 0 };
     }
   }
 
-  /** Collect platform fees to the designated wallet */
+  /** Collect platform fees */
   async collectFee(fromUser: string, amount: number): Promise<TransferResult> {
     if (amount <= 0) return { success: true, txId: 'no-fee' };
-    return this.internalTransfer(fromUser, 'platform-fees', amount);
+    return this.internalTransfer(fromUser, this.config.platformWallet, amount);
   }
 
-  /** Give mock balance for testing */
   creditMockBalance(userId: string, amount: number): void {
     if (!this.config.mockMode) return;
     const current = mockBalances.get(userId) || 0;
@@ -144,31 +177,22 @@ export class GalaChainService {
     return mockBalances.get(userId) || 0;
   }
 
-  private async transferToken(from: string, to: string, amount: number, type: string): Promise<TransferResult> {
+  /** Send native ETH from platform wallet to a recipient */
+  private async sendEth(to: string, amount: number): Promise<TransferResult> {
+    if (!this.wallet) {
+      return { success: false, error: 'Server signing not configured (missing PLATFORM_PRIVATE_KEY)' };
+    }
+
     try {
-      const response = await fetch(`${this.config.apiUrl}/api/${this.config.channelName}/${this.config.chaincodeName}/TransferToken`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from,
-          to,
-          tokenInstance: {
-            collection: 'GALA',
-            category: 'Unit',
-            type: 'none',
-            additionalKey: 'none',
-            instance: '0',
-          },
-          quantity: amount.toString(),
-        }),
+      const tx = await this.wallet.sendTransaction({
+        to,
+        value: parseEther(amount.toString()),
       });
-      const data: any = await response.json();
-      if (data.Status === 1) {
-        return { success: true, txId: data.Hash || `tx-${Date.now()}` };
-      }
-      return { success: false, error: data.Message || 'Transfer failed' };
+      const receipt = await tx.wait(1);
+      return { success: true, txId: receipt?.hash || tx.hash };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      console.error('[Base] sendEth error:', err);
+      return { success: false, error: err.message || 'Transfer failed' };
     }
   }
 }

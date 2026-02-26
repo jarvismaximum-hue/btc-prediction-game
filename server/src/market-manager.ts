@@ -4,6 +4,7 @@ import { OrderBook, Side, Trade } from './orderbook';
 import { PriceEngine } from './price-engine';
 import { GalaChainService } from './galachain';
 import { calcFees } from './fees';
+import * as db from './db';
 
 export type MarketStatus = 'pending' | 'trading' | 'settling' | 'settled';
 export type Outcome = 'UP' | 'DOWN' | null;
@@ -35,7 +36,6 @@ export class MarketManager extends EventEmitter {
   private markets: Map<string, Market> = new Map();
   private orderBooks: Map<string, OrderBook> = new Map();
   private positions: Map<string, Position[]> = new Map(); // userId -> positions
-  private balances: Map<string, number> = new Map(); // userId -> GALA balance
   private currentMarketId: string | null = null;
   private marketTimer: NodeJS.Timeout | null = null;
 
@@ -59,12 +59,26 @@ export class MarketManager extends EventEmitter {
     return this.orderBooks.get(marketId) || null;
   }
 
-  getBalance(userId: string): number {
-    return this.balances.get(userId) || 0;
+  /** Get balance from database */
+  async getBalance(userId: string): Promise<number> {
+    return db.getBalance(userId);
+  }
+
+  /** Get in-game balance */
+  async getGalaBalance(userId: string): Promise<number> {
+    return db.getBalance(userId);
   }
 
   getPositions(userId: string): Position[] {
     return this.positions.get(userId) || [];
+  }
+
+  getUserOrders(userId: string): any[] {
+    const market = this.currentMarket;
+    if (!market) return [];
+    const ob = this.orderBooks.get(market.id);
+    if (!ob) return [];
+    return ob.getUserOrders(userId);
   }
 
   getRecentMarkets(limit = 10): Market[] {
@@ -73,11 +87,14 @@ export class MarketManager extends EventEmitter {
       .slice(0, limit);
   }
 
-  /** Credit user's in-game balance (mock/dev) */
-  creditBalance(userId: string, amount: number): void {
-    const current = this.balances.get(userId) || 0;
-    this.balances.set(userId, current + amount);
-    this.galachain.creditMockBalance(userId, amount);
+  /** Credit user's in-game balance (persisted) */
+  async creditBalance(userId: string, amount: number, type = 'credit', txHash?: string, marketId?: string): Promise<number> {
+    return db.credit(userId, amount, type, txHash, marketId);
+  }
+
+  /** Debit user's in-game balance (persisted) */
+  async debitBalance(userId: string, amount: number, type = 'debit', txHash?: string, marketId?: string): Promise<number> {
+    return db.debit(userId, amount, type, txHash, marketId);
   }
 
   /** Start the market cycle */
@@ -94,22 +111,36 @@ export class MarketManager extends EventEmitter {
   }
 
   /** Place an order in the current market */
-  placeOrder(userId: string, side: Side, price: number, shares: number): { order: any; trades: Trade[] } {
+  async placeOrder(userId: string, side: Side, price: number, shares: number): Promise<{ order: any; trades: Trade[] }> {
     const market = this.currentMarket;
     if (!market || market.status !== 'trading') {
       throw new Error('No active market for trading');
     }
 
-    // Check balance
-    const fees = calcFees(shares, price, false); // worst case: taker fees
-    const requiredBalance = fees.netCost;
-    const userBalance = this.getBalance(userId);
-    if (userBalance < requiredBalance) {
-      throw new Error(`Insufficient balance. Need ${requiredBalance.toFixed(4)} GALA, have ${userBalance.toFixed(4)}`);
-    }
+    const fees = calcFees(shares, price, false);
+    const betCost = shares * price;
+    const totalFee = fees.platformFee + fees.takerFee;
 
-    // Deduct cost from balance
-    this.balances.set(userId, userBalance - requiredBalance);
+    // Atomically debit bet cost + fees in a single locked transaction
+    const debits: Array<{ amount: number; type: string; marketId?: string; details?: Record<string, any> }> = [
+      { amount: betCost, type: 'bet', marketId: market.id, details: { side, price, shares } },
+    ];
+    if (totalFee > 0) {
+      debits.push({
+        amount: totalFee, type: 'fee', marketId: market.id,
+        details: { platformFee: fees.platformFee, takerFee: fees.takerFee, side, price, shares },
+      });
+    }
+    await db.debitMultiple(userId, debits);
+
+    // Credit platform wallet with collected fees (separate, non-critical)
+    if (totalFee > 0) {
+      await db.credit(this.galachain.platformWallet, totalFee, 'fee_collected', undefined, market.id, {
+        fromUser: userId,
+        platformFee: fees.platformFee,
+        takerFee: fees.takerFee,
+      });
+    }
 
     const ob = this.orderBooks.get(market.id)!;
     const result = ob.placeOrder(userId, side, price, shares);
@@ -127,7 +158,7 @@ export class MarketManager extends EventEmitter {
   }
 
   /** Cancel an order */
-  cancelOrder(userId: string, orderId: string): boolean {
+  async cancelOrder(userId: string, orderId: string): Promise<boolean> {
     const market = this.currentMarket;
     if (!market || market.status !== 'trading') return false;
 
@@ -139,7 +170,7 @@ export class MarketManager extends EventEmitter {
       // Refund the unfilled portion
       const unfilled = cancelled.shares - cancelled.filled;
       const refund = unfilled * cancelled.price;
-      this.balances.set(userId, (this.balances.get(userId) || 0) + refund);
+      await db.credit(userId, refund, 'refund', undefined, market.id, { orderId, unfilled });
       this.emit('orderCancelled', { market, order: cancelled });
       return true;
     }
@@ -149,7 +180,6 @@ export class MarketManager extends EventEmitter {
   private createNextMarket(): void {
     const price = this.priceEngine.price;
     if (price <= 0) {
-      // Wait for first price tick
       console.log('[MarketManager] Waiting for price data...');
       this.marketTimer = setTimeout(() => this.createNextMarket(), 1000);
       return;
@@ -196,7 +226,7 @@ export class MarketManager extends EventEmitter {
     this.createNextMarket();
   }
 
-  private settleMarket(marketId: string): void {
+  private async settleMarket(marketId: string): Promise<void> {
     const market = this.markets.get(marketId);
     if (!market || !market.outcome) return;
 
@@ -204,34 +234,44 @@ export class MarketManager extends EventEmitter {
     market.settledAt = Date.now();
 
     // Pay out winning positions
-    const ob = this.orderBooks.get(marketId);
-    if (ob) {
-      const trades = ob.getAllTrades();
-      const userShares = new Map<string, { UP: number; DOWN: number }>();
-
-      // Calculate net shares per user from trades
-      for (const trade of trades) {
-        // This is simplified — in production you'd track through order ownership
-      }
-    }
-
-    // Simplified payout: iterate positions
     for (const [userId, positions] of this.positions.entries()) {
       for (const pos of positions) {
         if (pos.marketId !== marketId) continue;
 
         if (pos.side === market.outcome) {
-          // Winner: pay out 1 GALA per share (minus avg cost already deducted)
-          const payout = pos.shares; // shares resolve to 1.0 each
-          const profit = payout - (pos.shares * pos.avgPrice);
+          // Winner: credit in-game balance (1 ETH per share minus platform fee)
+          const grossPayout = pos.shares;
+          const payoutFee = grossPayout * 0.05; // 5% platform fee on winnings
+          const netPayout = grossPayout - payoutFee;
+          const profit = netPayout - (pos.shares * pos.avgPrice);
           pos.pnl = profit;
-          this.balances.set(userId, (this.balances.get(userId) || 0) + payout);
+          await db.credit(userId, netPayout, 'payout', undefined, marketId, { side: pos.side, shares: pos.shares, avgPrice: pos.avgPrice, profit, fee: payoutFee });
+          // Credit platform wallet with the payout fee
+          if (payoutFee > 0) {
+            await db.credit(this.galachain.platformWallet, payoutFee, 'fee_collected', undefined, marketId, {
+              fromUser: userId,
+              type: 'payout_fee',
+              grossPayout,
+              fee: payoutFee,
+            });
+          }
         } else {
           // Loser: shares resolve to 0
           pos.pnl = -(pos.shares * pos.avgPrice);
         }
       }
     }
+
+    // Persist to database
+    await db.saveSettledMarket({
+      id: market.id,
+      openPrice: market.openPrice,
+      closePrice: market.closePrice,
+      outcome: market.outcome!,
+      startTime: market.startTime,
+      endTime: market.endTime,
+      settledAt: market.settledAt!,
+    });
 
     console.log(`[MarketManager] Market ${marketId.slice(0, 8)} settled: ${market.outcome}`);
     this.emit('marketSettled', market);

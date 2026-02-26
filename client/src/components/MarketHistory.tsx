@@ -18,7 +18,7 @@ export function MarketHistory({ markets }: Props) {
     <div className="market-history">
       <h3>Recent Markets</h3>
       <div className="history-list">
-        {markets.map(m => (
+        {markets.slice(0, 5).map(m => (
           <div key={m.id} className={`history-item ${m.outcome?.toLowerCase()}`}>
             <div className="history-outcome">
               <span className={`outcome-badge ${m.outcome?.toLowerCase()}`}>
