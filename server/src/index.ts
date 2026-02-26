@@ -488,6 +488,11 @@ io.on('connection', (socket) => {
     socket.emit('candleHistory', priceEngine.candleHistory);
   });
 
+  // Allow clients to re-request chat history (e.g. late-mounting components)
+  socket.on('requestChatHistory', () => {
+    socket.emit('chatHistory', chatHistory.slice(-50));
+  });
+
   // Handle incoming chat messages
   socket.on('chatMessage', (data: { sender: string; content: string }) => {
     if (!data.content || data.content.trim().length === 0) return;

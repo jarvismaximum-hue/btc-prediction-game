@@ -10,7 +10,7 @@ import './App.css';
 
 function AppContent() {
   const auth = useAuthContext();
-  const { socketRef } = useSocket();
+  const { socketRef, connected } = useSocket();
   const [gameBalance, setGameBalance] = useState(0);
   const [myPositions, setMyPositions] = useState<any[]>([]);
   const [showWallet, setShowWallet] = useState(false);
@@ -95,6 +95,7 @@ function AppContent() {
             socketRef={socketRef}
             isAuthenticated={auth.isAuthenticated}
             account={auth.account || null}
+            connected={connected}
           />
         </aside>
       </div>

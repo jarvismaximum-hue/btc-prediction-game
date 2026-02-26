@@ -13,9 +13,10 @@ interface Props {
   socketRef: React.RefObject<Socket | null>;
   isAuthenticated: boolean;
   account: string | null;
+  connected?: boolean;
 }
 
-export function AgentChat({ socketRef, isAuthenticated, account }: Props) {
+export function AgentChat({ socketRef, isAuthenticated, account, connected }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -37,11 +38,16 @@ export function AgentChat({ socketRef, isAuthenticated, account }: Props) {
     socket.on('chatHistory', onHistory);
     socket.on('chatMessage', onMessage);
 
+    // If already connected, request chat history (may have missed the initial emit)
+    if (socket.connected) {
+      socket.emit('requestChatHistory');
+    }
+
     return () => {
       socket.off('chatHistory', onHistory);
       socket.off('chatMessage', onMessage);
     };
-  }, [socketRef]);
+  }, [socketRef, connected]);
 
   // Track if user has scrolled up
   useEffect(() => {
