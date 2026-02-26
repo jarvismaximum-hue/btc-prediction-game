@@ -28,11 +28,11 @@ export function AgentChat({ socketRef, isAuthenticated, account, connected }: Pr
     if (!socket) return;
 
     const onHistory = (history: ChatMessage[]) => {
-      setMessages(history);
+      setMessages(history.slice(-25));
     };
 
     const onMessage = (msg: ChatMessage) => {
-      setMessages(prev => [...prev, msg].slice(-100));
+      setMessages(prev => [...prev, msg].slice(-25));
     };
 
     socket.on('chatHistory', onHistory);

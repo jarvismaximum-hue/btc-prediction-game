@@ -263,6 +263,25 @@ app.get('/api/games', (_req, res) => {
   res.json(games);
 });
 
+// Debug: dump all positions
+app.get('/api/debug/positions', (_req, res) => {
+  const allGames = gameRegistry.getGames();
+  const debug: any = {};
+  for (const g of allGames) {
+    const market = gameRegistry.getCurrentMarket(g.type);
+    if (market) {
+      debug[g.type] = {
+        marketId: market.id,
+        stats: gameRegistry.getMarketStats(market.id),
+        positions: gameRegistry.getMarketPositions(market.id),
+      };
+    }
+  }
+  // Also dump raw position count
+  debug._positionMapSize = (gameRegistry as any).positions?.size || 'N/A';
+  res.json(debug);
+});
+
 // Get current market for a specific game
 app.get('/api/games/:gameType/market', (req, res): void => {
   const { gameType } = req.params;
@@ -411,7 +430,7 @@ app.post('/api/chat', requireAuth, (req, res): void => {
 });
 
 app.get('/api/chat/history', (_req, res) => {
-  res.json(chatHistory.slice(-50));
+  res.json(chatHistory.slice(-20));
 });
 
 // --- API Documentation page ---
@@ -448,7 +467,7 @@ interface ChatMessage {
   isAgent: boolean;
 }
 const chatHistory: ChatMessage[] = [];
-const MAX_CHAT_HISTORY = 100;
+const MAX_CHAT_HISTORY = 30;
 
 function addChatMessage(sender: string, content: string, isAgent: boolean): ChatMessage {
   const msg: ChatMessage = {
@@ -481,7 +500,7 @@ io.on('connection', (socket) => {
   socket.emit('candleHistory', priceEngine.candleHistory);
 
   // Send chat history
-  socket.emit('chatHistory', chatHistory.slice(-50));
+  socket.emit('chatHistory', chatHistory.slice(-20));
 
   // Allow clients to re-request candle history (e.g. after reconnect)
   socket.on('requestCandleHistory', () => {
@@ -490,7 +509,7 @@ io.on('connection', (socket) => {
 
   // Allow clients to re-request chat history (e.g. late-mounting components)
   socket.on('requestChatHistory', () => {
-    socket.emit('chatHistory', chatHistory.slice(-50));
+    socket.emit('chatHistory', chatHistory.slice(-20));
   });
 
   // Handle incoming chat messages
