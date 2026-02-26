@@ -176,8 +176,10 @@ function pick<T>(arr: T[]): T {
 /**
  * Start the bot system. Bots will:
  * 1. Get initial balances credited
- * 2. Trade on markets as they open
- * 3. Post chat messages periodically
+ * 2. Trade on all currently active markets immediately
+ * 3. Trade on new markets as they open
+ * 4. Periodically place additional trades during market windows
+ * 5. Post chat messages periodically
  */
 export async function startBots(
   gameRegistry: GameRegistry,
@@ -196,16 +198,65 @@ export async function startBots(
     }
   }
 
-  // Listen for new markets and have bots trade
-  gameRegistry.on('marketOpen', (market: Market) => {
+  // Helper: have all bots trade on a specific game type
+  async function botsTradeOnGame(gameType: string) {
+    // Top up bot balances so they never run dry
+    for (const bot of BOTS) {
+      try {
+        const bal = await db.getBalance(bot.id);
+        if (bal < 500) {
+          await db.credit(bot.id, 5000, 'bot_topup', undefined, undefined, { botName: bot.name });
+        }
+      } catch {}
+    }
+
     for (const bot of BOTS) {
       // Each bot decides whether to trade this market (80% chance)
       if (Math.random() > 0.8) continue;
 
-      const delay = randInt(bot.tradeDelay.min, bot.tradeDelay.max);
-      setTimeout(() => executeBotTrade(bot, market, gameRegistry), delay);
+      const delay = randInt(Math.min(bot.tradeDelay.min, 3000), Math.min(bot.tradeDelay.max, 15000));
+      setTimeout(() => executeBotTrade(bot, gameType, gameRegistry), delay);
     }
+  }
+
+  // Trade on all currently active markets RIGHT NOW (catches markets that opened before bots started)
+  const allGames = gameRegistry.getGames();
+  for (const game of allGames) {
+    const market = gameRegistry.getCurrentMarket(game.type);
+    if (market && market.status === 'trading') {
+      console.log(`[Bots] Found active market for ${game.type}, placing initial trades`);
+      botsTradeOnGame(game.type);
+    }
+  }
+
+  // Listen for new markets and have bots trade
+  gameRegistry.on('marketOpen', async (market: Market) => {
+    botsTradeOnGame(market.gameType);
   });
+
+  // Periodic trading loop — every 30-90 seconds, pick a random active market and have some bots trade
+  const tradeLoop = () => {
+    const activeGames = gameRegistry.getGames().filter(g => {
+      const m = gameRegistry.getCurrentMarket(g.type);
+      return m && m.status === 'trading' && (m.endTime - Date.now()) > 20000;
+    });
+
+    if (activeGames.length > 0) {
+      const game = pick(activeGames);
+      // Only 1-2 bots place additional trades each cycle
+      const activeBots = BOTS.filter(() => Math.random() < 0.3);
+      for (const bot of activeBots) {
+        const delay = randInt(1000, 8000);
+        setTimeout(() => executeBotTrade(bot, game.type, gameRegistry), delay);
+      }
+    }
+
+    const nextDelay = randInt(30000, 90000);
+    setTimeout(tradeLoop, nextDelay);
+  };
+
+  // Start the periodic trade loop
+  setTimeout(tradeLoop, randInt(15000, 45000));
 
   // Listen for settlements and have bots react in chat
   gameRegistry.on('marketSettled', (market: Market) => {
@@ -239,25 +290,25 @@ export async function startBots(
     io.emit('chatMessage', chatMsg);
 
     // Schedule next chat message
-    const nextDelay = randInt(45000, 180000); // 45s to 3min
+    const nextDelay = randInt(30000, 120000); // 30s to 2min
     setTimeout(chatLoop, nextDelay);
   };
 
   // Start chat loop after initial delay
-  setTimeout(chatLoop, randInt(10000, 30000));
+  setTimeout(chatLoop, randInt(5000, 15000));
 
   console.log('[Bots] All 5 bots active and trading');
 }
 
 async function executeBotTrade(
   bot: Bot,
-  market: Market,
+  gameType: string,
   gameRegistry: GameRegistry,
 ): Promise<void> {
   try {
-    // Check market is still trading
-    const currentMarket = gameRegistry.getCurrentMarket(market.gameType);
-    if (!currentMarket || currentMarket.id !== market.id || currentMarket.status !== 'trading') {
+    // Get whatever market is currently active for this game type
+    const currentMarket = gameRegistry.getCurrentMarket(gameType);
+    if (!currentMarket || currentMarket.status !== 'trading') {
       return;
     }
 
@@ -275,7 +326,7 @@ async function executeBotTrade(
       }
       case 'contrarian': {
         // Check current market stats to fade the majority
-        const stats = gameRegistry.getMarketStats(market.id);
+        const stats = gameRegistry.getMarketStats(currentMarket.id);
         if (stats.upShares > stats.downShares) {
           side = Math.random() < 0.7 ? 'DOWN' : 'UP'; // 70% fade
         } else if (stats.downShares > stats.upShares) {
@@ -311,12 +362,13 @@ async function executeBotTrade(
     const variance = randFloat(-0.15, 0.15);
     const price = Math.max(0.1, Math.min(0.9, basePrice + variance));
 
-    // Place the order
-    await gameRegistry.placeOrder(bot.id, market.id, side, parseFloat(price.toFixed(2)), shares);
-    console.log(`[Bots] ${bot.name} bet ${shares} shares ${side} @ ${price.toFixed(2)} on ${market.gameType}`);
+    // Place the order on the CURRENT market
+    await gameRegistry.placeOrder(bot.id, currentMarket.id, side, parseFloat(price.toFixed(2)), shares);
+    console.log(`[Bots] ${bot.name} bet ${shares} shares ${side} @ ${price.toFixed(2)} on ${gameType}`);
   } catch (err: any) {
-    // Silently handle errors (insufficient balance, market closed, etc.)
-    if (!err.message?.includes('Insufficient balance') && !err.message?.includes('No active market')) {
+    if (err.message?.includes('Insufficient balance')) {
+      console.log(`[Bots] ${bot.name} low balance, will top up next round`);
+    } else if (!err.message?.includes('No active market')) {
       console.error(`[Bots] ${bot.name} trade error:`, err.message);
     }
   }
