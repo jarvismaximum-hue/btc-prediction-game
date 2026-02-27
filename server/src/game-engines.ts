@@ -49,16 +49,38 @@ let ethPrice = 0;
 let ethPollTimer: NodeJS.Timeout | null = null;
 
 async function pollEthPrice(): Promise<void> {
+  // Source 1: Coinbase REST API (most reliable, no key needed)
+  try {
+    const data = await fetchJson('https://api.coinbase.com/v2/prices/ETH-USD/spot');
+    const price = parseFloat(data?.data?.amount);
+    if (price > 0) { ethPrice = price; return; }
+  } catch {}
+
+  // Source 2: Binance US
+  try {
+    const data = await fetchJson('https://api.binance.us/api/v3/ticker/price?symbol=ETHUSD');
+    const price = parseFloat(data?.price);
+    if (price > 0) { ethPrice = price; return; }
+  } catch {}
+
+  // Source 3: Kraken
+  try {
+    const data = await fetchJson('https://api.kraken.com/0/public/Ticker?pair=ETHUSD');
+    const pairs = data?.result;
+    const key = Object.keys(pairs || {})[0];
+    const price = parseFloat(pairs?.[key]?.c?.[0]);
+    if (price > 0) { ethPrice = price; return; }
+  } catch {}
+
+  // Source 4: CoinGecko (rate-limited, last resort)
   try {
     const data = await fetchJson(
       'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
     );
     const price = data?.ethereum?.usd;
-    if (typeof price === 'number' && price > 0) {
-      ethPrice = price;
-    }
+    if (typeof price === 'number' && price > 0) { ethPrice = price; return; }
   } catch (err: any) {
-    console.error('[ETH-5min] CoinGecko fetch error:', err.message);
+    console.error('[ETH-5min] All price sources failed:', err.message);
   }
 }
 
@@ -109,20 +131,28 @@ function isUSMarketOpen(): boolean {
 }
 
 async function pollSpyPrice(): Promise<void> {
+  // Source 1: Yahoo Finance (query1)
   try {
     const data = await fetchJson(
       'https://query1.finance.yahoo.com/v8/finance/chart/SPY?interval=1m&range=1d',
     );
     const meta = data?.chart?.result?.[0]?.meta;
-    // Use regularMarketPrice when market is open, previousClose when closed
     const price = isUSMarketOpen()
       ? meta?.regularMarketPrice
       : meta?.regularMarketPrice || meta?.previousClose || meta?.chartPreviousClose;
-    if (typeof price === 'number' && price > 0) {
-      spyPrice = price;
-    }
+    if (typeof price === 'number' && price > 0) { spyPrice = price; return; }
+  } catch {}
+
+  // Source 2: Yahoo Finance (query2, different CDN)
+  try {
+    const data = await fetchJson(
+      'https://query2.finance.yahoo.com/v8/finance/chart/SPY?interval=1m&range=1d',
+    );
+    const meta = data?.chart?.result?.[0]?.meta;
+    const price = meta?.regularMarketPrice || meta?.previousClose;
+    if (typeof price === 'number' && price > 0) { spyPrice = price; return; }
   } catch (err: any) {
-    console.error('[SPY-5min] Yahoo Finance fetch error:', err.message);
+    console.error('[SPY-5min] All price sources failed:', err.message);
   }
 }
 

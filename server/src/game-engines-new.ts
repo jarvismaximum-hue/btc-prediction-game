@@ -21,24 +21,29 @@ let goldPrice = 0;
 let goldPollTimer: NodeJS.Timeout | null = null;
 
 async function pollGoldPrice(): Promise<void> {
+  // Source 1: metals.dev free API
   try {
-    // Use metals.dev free API
     const data = await fetchJson('https://api.metals.dev/v1/latest?api_key=demo&currency=USD&unit=toz');
     const price = data?.metals?.gold;
-    if (typeof price === 'number' && price > 0) {
-      goldPrice = price;
-    }
-  } catch {
-    // Fallback: try alternative source
-    try {
-      const data = await fetchJson(
-        'https://api.coingecko.com/api/v3/simple/price?ids=tether-gold&vs_currencies=usd'
-      );
-      const price = data?.['tether-gold']?.usd;
-      if (typeof price === 'number' && price > 0) goldPrice = price;
-    } catch (err: any) {
-      console.error('[Gold] Price fetch error:', err.message);
-    }
+    if (typeof price === 'number' && price > 0) { goldPrice = price; return; }
+  } catch {}
+
+  // Source 2: Coinbase PAXG (gold-backed token, close proxy)
+  try {
+    const data = await fetchJson('https://api.coinbase.com/v2/prices/PAXG-USD/spot');
+    const price = parseFloat(data?.data?.amount);
+    if (price > 0) { goldPrice = price; return; }
+  } catch {}
+
+  // Source 3: CoinGecko tether-gold (rate-limited, last resort)
+  try {
+    const data = await fetchJson(
+      'https://api.coingecko.com/api/v3/simple/price?ids=tether-gold&vs_currencies=usd'
+    );
+    const price = data?.['tether-gold']?.usd;
+    if (typeof price === 'number' && price > 0) { goldPrice = price; return; }
+  } catch (err: any) {
+    console.error('[Gold] All price sources failed:', err.message);
   }
 }
 
@@ -82,6 +87,7 @@ function isUSMarketOpen(): boolean {
 }
 
 async function pollQqqPrice(): Promise<void> {
+  // Source 1: Yahoo Finance
   try {
     const data = await fetchJson(
       'https://query1.finance.yahoo.com/v8/finance/chart/QQQ?interval=1m&range=1d'
@@ -90,9 +96,19 @@ async function pollQqqPrice(): Promise<void> {
     const price = isUSMarketOpen()
       ? meta?.regularMarketPrice
       : meta?.regularMarketPrice || meta?.previousClose || meta?.chartPreviousClose;
-    if (typeof price === 'number' && price > 0) qqqPrice = price;
+    if (typeof price === 'number' && price > 0) { qqqPrice = price; return; }
+  } catch {}
+
+  // Source 2: Alternative Yahoo endpoint
+  try {
+    const data = await fetchJson(
+      'https://query2.finance.yahoo.com/v8/finance/chart/QQQ?interval=1m&range=1d'
+    );
+    const meta = data?.chart?.result?.[0]?.meta;
+    const price = meta?.regularMarketPrice || meta?.previousClose;
+    if (typeof price === 'number' && price > 0) { qqqPrice = price; return; }
   } catch (err: any) {
-    console.error('[QQQ] Yahoo Finance fetch error:', err.message);
+    console.error('[QQQ] All price sources failed:', err.message);
   }
 }
 
@@ -129,19 +145,27 @@ let eurusdPrice = 0;
 let forexPollTimer: NodeJS.Timeout | null = null;
 
 async function pollEurusd(): Promise<void> {
+  // Source 1: Open Exchange Rates (free, reliable)
   try {
-    const data = await fetchJson(
-      'https://api.coingecko.com/api/v3/simple/price?ids=euro&vs_currencies=usd'
-    );
-    // CoinGecko doesn't have forex directly — use stablecoin proxy
-    // EURC/USDC as a proxy for EUR/USD
-    const fallback = await fetchJson(
-      'https://open.er-api.com/v6/latest/EUR'
-    );
-    const rate = fallback?.rates?.USD;
-    if (typeof rate === 'number' && rate > 0) eurusdPrice = rate;
+    const data = await fetchJson('https://open.er-api.com/v6/latest/EUR');
+    const rate = data?.rates?.USD;
+    if (typeof rate === 'number' && rate > 0) { eurusdPrice = rate; return; }
+  } catch {}
+
+  // Source 2: exchangerate.host
+  try {
+    const data = await fetchJson('https://api.exchangerate.host/latest?base=EUR&symbols=USD');
+    const rate = data?.rates?.USD;
+    if (typeof rate === 'number' && rate > 0) { eurusdPrice = rate; return; }
+  } catch {}
+
+  // Source 3: Coinbase EURC stablecoin proxy
+  try {
+    const data = await fetchJson('https://api.coinbase.com/v2/exchange-rates?currency=EUR');
+    const rate = parseFloat(data?.data?.rates?.USD);
+    if (rate > 0) { eurusdPrice = rate; return; }
   } catch (err: any) {
-    console.error('[EUR/USD] Forex fetch error:', err.message);
+    console.error('[EUR/USD] All forex sources failed:', err.message);
   }
 }
 
@@ -174,21 +198,45 @@ let solPrice = 0;
 let solPollTimer: NodeJS.Timeout | null = null;
 
 async function pollSolPrice(): Promise<void> {
+  // Source 1: Coinbase REST API
+  try {
+    const data = await fetchJson('https://api.coinbase.com/v2/prices/SOL-USD/spot');
+    const price = parseFloat(data?.data?.amount);
+    if (price > 0) { solPrice = price; return; }
+  } catch {}
+
+  // Source 2: Binance US
+  try {
+    const data = await fetchJson('https://api.binance.us/api/v3/ticker/price?symbol=SOLUSD');
+    const price = parseFloat(data?.price);
+    if (price > 0) { solPrice = price; return; }
+  } catch {}
+
+  // Source 3: Kraken
+  try {
+    const data = await fetchJson('https://api.kraken.com/0/public/Ticker?pair=SOLUSD');
+    const pairs = data?.result;
+    const key = Object.keys(pairs || {})[0];
+    const price = parseFloat(pairs?.[key]?.c?.[0]);
+    if (price > 0) { solPrice = price; return; }
+  } catch {}
+
+  // Source 4: CoinGecko (rate-limited, last resort)
   try {
     const data = await fetchJson(
       'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
     );
     const price = data?.solana?.usd;
-    if (typeof price === 'number' && price > 0) solPrice = price;
+    if (typeof price === 'number' && price > 0) { solPrice = price; return; }
   } catch (err: any) {
-    console.error('[SOL] CoinGecko fetch error:', err.message);
+    console.error('[SOL] All price sources failed:', err.message);
   }
 }
 
 function createSolGame(): GameConfig {
   pollSolPrice().catch(() => {});
   if (solPollTimer) clearInterval(solPollTimer);
-  solPollTimer = setInterval(pollSolPrice, 10_000);
+  solPollTimer = setInterval(pollSolPrice, 15_000);
 
   return {
     type: 'sol-5min',
