@@ -31,6 +31,9 @@ RUN cd server && npm install --omit=dev
 # Copy built server
 COPY --from=builder /app/server/dist ./server/dist
 
+# Copy server public assets (landing pages, etc.)
+COPY server/public ./server/public
+
 # Copy built client
 COPY --from=builder /app/client/dist ./client/dist
 
