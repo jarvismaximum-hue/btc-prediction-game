@@ -16,6 +16,7 @@ import { startBots } from './bots';
 import { createAuthRouter, requireAuth } from './auth';
 import { initDb, getRecentSettledMarkets } from './db';
 import { initApiKeys, createApiKeysTable, generateApiKey, listApiKeys, revokeApiKey } from './api-keys';
+import { initAgents, createAgentsTable, registerAgent, getLeaderboard, getAgentCount, getAgentByWallet } from './agents';
 
 dotenv.config();
 
@@ -344,7 +345,7 @@ app.post('/api/games/:gameType/bet', requireAuth, async (req, res): Promise<void
 });
 
 // Get all current markets across all games (agent overview)
-app.get('/api/arena', (_req, res) => {
+app.get('/api/arena', async (_req, res) => {
   const games = gameRegistry.getGames().map(g => {
     const market = gameRegistry.getCurrentMarket(g.type);
     return {
@@ -359,15 +360,81 @@ app.get('/api/arena', (_req, res) => {
       } : null,
     };
   });
+  const totalAgents = await getAgentCount();
   res.json({
     name: 'ProfitPlay Agent Arena',
-    description: 'Prediction market playground for AI agents. Bet ETH on real-world outcomes.',
+    description: 'Prediction market playground for AI agents. One API call to start playing.',
+    version: '2.0',
+    total_agents: totalAgents,
     games,
     docs: '/docs',
+    quickstart: {
+      register: 'POST /api/agents/register { "name": "my-agent" } → API key + wallet + 1000 credits instantly',
+      leaderboard: 'GET /api/leaderboard',
+    },
     auth: {
+      agent: 'POST /api/agents/register (recommended — zero friction)',
       wallet: 'POST /auth/login (MetaMask signature)',
       apiKey: 'POST /api/keys/create (requires wallet auth first)',
     },
+  });
+});
+
+// ===== AGENT AUTO-REGISTRATION (zero-friction onboarding) =====
+
+// Register a new agent — one call, you're playing
+app.post('/api/agents/register', async (req, res): Promise<void> => {
+  const { name, callback_url, metadata } = req.body;
+
+  if (!name) {
+    res.status(400).json({ error: 'name is required (alphanumeric, hyphens, underscores, max 64 chars)' }); return;
+  }
+
+  try {
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const agent = await registerAgent(name, { callback_url, metadata });
+    agent.websocket_url = baseUrl;
+    agent.docs_url = `${baseUrl}/docs`;
+
+    console.log(`[Agent] New agent registered: ${agent.name} (${agent.agent_id}) — wallet: ${agent.wallet_address}`);
+
+    res.status(201).json(agent);
+  } catch (err: any) {
+    if (err.message.includes('already taken')) {
+      res.status(409).json({ error: err.message }); return;
+    }
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Agent leaderboard (public)
+app.get('/api/leaderboard', async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+  const sortBy = (req.query.sort as 'pnl' | 'wins' | 'bets') || 'pnl';
+  const leaderboard = await getLeaderboard(limit, sortBy);
+  const totalAgents = await getAgentCount();
+  res.json({ total_agents: totalAgents, leaderboard });
+});
+
+// Agent profile by name (public)
+app.get('/api/agents/:name', async (req, res): Promise<void> => {
+  const { name } = req.params;
+  const { getAgentByName } = await import('./agents');
+  const agent = await getAgentByName(name);
+  if (!agent) {
+    res.status(404).json({ error: `Agent "${name}" not found` }); return;
+  }
+  res.json({
+    agent_id: agent.id,
+    name: agent.name,
+    wallet_address: agent.wallet_address,
+    sandbox: agent.sandbox,
+    total_bets: agent.total_bets,
+    total_wins: agent.total_wins,
+    win_rate: agent.total_bets > 0 ? (agent.total_wins / agent.total_bets * 100).toFixed(1) + '%' : '0%',
+    total_pnl: parseFloat(agent.total_pnl),
+    joined: agent.created_at,
+    last_active: agent.last_active_at,
   });
 });
 
@@ -810,11 +877,13 @@ async function start() {
   // Initialize database
   await initDb();
 
-  // Initialize API keys
+  // Initialize API keys + agents
   const { pool } = await import('./db');
   initApiKeys(pool);
   await createApiKeysTable();
-  console.log('[Server] Database + API keys initialized');
+  initAgents(pool);
+  await createAgentsTable();
+  console.log('[Server] Database + API keys + agents initialized');
 
   // Register all game types
   gameRegistry.registerGame(createBtcGame(priceEngine));

@@ -9,5 +9,8 @@
     "build": "npm run build:client && npm run build:server",
     "start": "cd server && node dist/index.js",
     "dev": "cd server && npm run dev"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.8.3"
   }
 }

@@ -1,0 +1,24 @@
+{
+  "name": "@profitplay/sdk",
+  "version": "0.1.0",
+  "description": "ProfitPlay Agent SDK — Zero-friction prediction market for AI agents",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["ai", "agent", "prediction-market", "trading", "profitplay"],
+  "author": "ProfitPlay <jarvismaximum@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jarvismaximum-hue/btc-prediction-game"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
