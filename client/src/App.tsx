@@ -3,10 +3,18 @@ import { AuthProvider, useAuthContext } from './contexts/AuthContext';
 import { WalletConnect } from './components/WalletConnect';
 import { DepositPanel } from './components/DepositPanel';
 import { GameGrid } from './components/GameGrid';
+import { AuctionView } from './components/AuctionView';
 import { AgentChat } from './components/AgentChat';
 import { useSocket } from './hooks/useSocket';
 import { apiFetch } from './services/api';
 import './App.css';
+
+type TabId = 'predictions' | 'auction';
+
+const TAB_LABELS: Record<TabId, { label: string; icon: string }> = {
+  predictions: { label: 'Predictions', icon: '📈' },
+  auction: { label: 'Dutch Dilemma', icon: '🔥' },
+};
 
 function AppContent() {
   const auth = useAuthContext();
@@ -14,6 +22,7 @@ function AppContent() {
   const [gameBalance, setGameBalance] = useState(0);
   const [myPositions, setMyPositions] = useState<any[]>([]);
   const [showWallet, setShowWallet] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>('predictions');
 
   useEffect(() => {
     if (!auth.isAuthenticated) return;
@@ -51,15 +60,29 @@ function AppContent() {
           <h1 className="logo">ProfitPlay</h1>
           <span className="logo-sub">Agent Arena</span>
         </div>
+        <div className="header-center">
+          <nav className="tab-nav">
+            {(['predictions', 'auction'] as TabId[]).map(tab => (
+              <button
+                key={tab}
+                className={`tab-btn ${activeTab === tab ? 'active' : ''}`}
+                onClick={() => setActiveTab(tab)}
+              >
+                <span className="tab-icon">{TAB_LABELS[tab].icon}</span>
+                {TAB_LABELS[tab].label}
+              </button>
+            ))}
+          </nav>
+        </div>
         <div className="header-right">
           <a href="/docs" className="docs-link">API Docs</a>
           {auth.isAuthenticated && (
             <button className="balance-btn" onClick={() => setShowWallet(!showWallet)}>
-              <span className="balance-amount">{gameBalance.toFixed(4)} ETH</span>
+              <span className="balance-amount">{gameBalance.toFixed(2)} GALA</span>
               <span className="balance-onchain">
                 {auth.ethUsdPrice > 0
-                  ? `$${((auth.onChainBalance + auth.mainnetBalance) * auth.ethUsdPrice).toFixed(2)}`
-                  : `${(auth.onChainBalance + auth.mainnetBalance).toFixed(4)} wallet`}
+                  ? `$${(auth.onChainBalance * auth.ethUsdPrice).toFixed(2)}`
+                  : `${auth.onChainBalance.toFixed(2)} wallet`}
               </span>
             </button>
           )}
@@ -82,12 +105,21 @@ function AppContent() {
 
       <div className="arena-layout">
         <main className="arena-games">
-          <GameGrid
-            positions={myPositions}
-            isAuthenticated={auth.isAuthenticated}
-            balance={gameBalance}
-            onOrderPlaced={refreshAccount}
-          />
+          {activeTab === 'predictions' ? (
+            <GameGrid
+              positions={myPositions}
+              isAuthenticated={auth.isAuthenticated}
+              balance={gameBalance}
+              onOrderPlaced={refreshAccount}
+            />
+          ) : (
+            <AuctionView
+              isAuthenticated={auth.isAuthenticated}
+              balance={gameBalance}
+              onBalanceChanged={refreshAccount}
+              socketRef={socketRef}
+            />
+          )}
         </main>
 
         <aside className="arena-chat">

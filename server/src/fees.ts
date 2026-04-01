@@ -5,7 +5,7 @@
  *   - Approaches 0% at extremes (p near 0 or 1)
  * - Maker fee: 0% (makers add liquidity to order book)
  * - Maker rebate: 20% of taker fees redistributed to makers
- * - Platform fee: 5% flat on all ETH transactions
+ * - Platform fee: 5% flat on all GALA transactions
  */
 
 export interface FeeBreakdown {

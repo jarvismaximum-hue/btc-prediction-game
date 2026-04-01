@@ -75,7 +75,7 @@ export class ProfitPlay {
       throw new ProfitPlayError(`Registration failed: ${await resp.text()}`, resp.status);
     }
 
-    const data = await resp.json();
+    const data = await resp.json() as { api_key: string; agent_id: string; name: string };
     return new ProfitPlay(data.api_key, baseUrl, data.agent_id, data.name);
   }
 
@@ -94,7 +94,7 @@ export class ProfitPlay {
     if (!resp.ok) {
       throw new ProfitPlayError(`GET ${path} failed: ${await resp.text()}`, resp.status);
     }
-    return resp.json();
+    return resp.json() as Promise<T>;
   }
 
   private async post<T = any>(path: string, body: Record<string, any>): Promise<T> {
@@ -109,7 +109,7 @@ export class ProfitPlay {
     if (!resp.ok) {
       throw new ProfitPlayError(`POST ${path} failed: ${await resp.text()}`, resp.status);
     }
-    return resp.json();
+    return resp.json() as Promise<T>;
   }
 
   // --- Discovery ---

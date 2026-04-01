@@ -194,7 +194,7 @@ export async function startBots(
     if (currentBalance < 100) {
       const topUp = 10000 - currentBalance;
       await db.credit(bot.id, topUp, 'bot_credit', undefined, undefined, { botName: bot.name });
-      console.log(`[Bots] Credited ${bot.name} with ${topUp.toFixed(2)} ETH (balance: ${(currentBalance + topUp).toFixed(2)})`);
+      console.log(`[Bots] Credited ${bot.name} with ${topUp.toFixed(2)} GALA (balance: ${(currentBalance + topUp).toFixed(2)})`);
     }
   }
 

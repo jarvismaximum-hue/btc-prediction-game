@@ -239,7 +239,7 @@ export class MarketManager extends EventEmitter {
         if (pos.marketId !== marketId) continue;
 
         if (pos.side === market.outcome) {
-          // Winner: credit in-game balance (1 ETH per share minus platform fee)
+          // Winner: credit in-game balance (1 GALA per share minus platform fee)
           const grossPayout = pos.shares;
           const payoutFee = grossPayout * 0.05; // 5% platform fee on winnings
           const netPayout = grossPayout - payoutFee;

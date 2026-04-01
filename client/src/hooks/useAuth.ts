@@ -1,36 +1,35 @@
 import { useState, useCallback, useEffect } from 'react';
-import { useEthereum } from './useEthereum';
+import { useGalaChain } from './useGalaChain';
 import { apiFetch } from '../services/api';
 
 const TOKEN_KEY = 'btc-prediction-token';
 
 export function useAuth() {
-  const eth = useEthereum();
+  const gala = useGalaChain();
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [serverAddress, setServerAddress] = useState<string | null>(() => localStorage.getItem('btc-prediction-address'));
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
-  // Auto-reconnect MetaMask on page refresh if we have a stored token.
-  // This ensures on-chain balance is fetched immediately.
+  // Auto-reconnect wallet on page refresh if we have a stored token.
   useEffect(() => {
-    if (token && !eth.ethAddress && !eth.connecting) {
-      eth.connect().catch(() => {});
+    if (token && !gala.ethAddress && !gala.connecting) {
+      gala.connect().catch(() => {});
     }
   }, []);
 
   const signIn = useCallback(async () => {
-    const addr = await eth.connect();
+    const addr = await gala.connect();
     if (!addr) return;
 
     setIsAuthenticating(true);
     try {
-      // Get nonce
+      // Get nonce (using 0x address)
       const nonceRes = await apiFetch(`/auth/nonce?address=${encodeURIComponent(addr)}`);
       if (!nonceRes.ok) throw new Error('Failed to get nonce');
       const { message } = await nonceRes.json();
 
       // Sign with MetaMask
-      const sig = await eth.signMessage(message);
+      const sig = await gala.signMessage(message);
       if (!sig) return;
 
       // Login
@@ -53,30 +52,30 @@ export function useAuth() {
     } finally {
       setIsAuthenticating(false);
     }
-  }, [eth]);
+  }, [gala]);
 
   const signOut = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem('btc-prediction-address');
     setToken(null);
     setServerAddress(null);
-    eth.disconnect();
-  }, [eth]);
+    gala.disconnect();
+  }, [gala]);
 
   return {
-    account: serverAddress || eth.ethAddress,
-    ethAddress: eth.ethAddress,
-    onChainBalance: eth.onChainBalance,
-    mainnetBalance: eth.mainnetBalance,
-    ethUsdPrice: eth.ethUsdPrice,
+    account: serverAddress || gala.ethAddress,
+    ethAddress: gala.ethAddress,
+    onChainBalance: gala.onChainBalance,
+    mainnetBalance: 0, // Not applicable for GalaChain
+    ethUsdPrice: gala.galaUsdPrice,
     token,
     isAuthenticated: !!token,
     isAuthenticating,
-    connecting: eth.connecting,
-    error: eth.error,
+    connecting: gala.connecting,
+    error: gala.error,
     signIn,
     signOut,
-    depositToGame: eth.depositToGame,
-    fetchOnChainBalance: eth.fetchBalance,
+    depositToGame: gala.depositToGame,
+    fetchOnChainBalance: gala.fetchBalance,
   };
 }

@@ -17,6 +17,7 @@ import { createAuthRouter, requireAuth } from './auth';
 import { initDb, getRecentSettledMarkets } from './db';
 import { initApiKeys, createApiKeysTable, generateApiKey, listApiKeys, revokeApiKey } from './api-keys';
 import { initAgents, createAgentsTable, registerAgent, getLeaderboard, getAgentCount, getAgentByWallet } from './agents';
+import { AuctionEngine } from './auction-engine';
 
 dotenv.config();
 
@@ -37,6 +38,7 @@ const io = new SocketIO(httpServer, {
 const priceEngine = new PriceEngine();
 const galachain = new GalaChainService();
 const marketManager = new MarketManager(priceEngine, galachain);
+const auctionEngine = new AuctionEngine();
 
 // --- Auth routes ---
 app.use(createAuthRouter());
@@ -145,7 +147,7 @@ app.post('/api/deposit', requireAuth, async (req, res): Promise<void> => {
     // Use verified amount (may differ slightly from claimed amount)
     const creditAmount = verification.actualAmount || amount;
     const newBalance = await marketManager.creditBalance(user.address, creditAmount, 'deposit', txHash);
-    console.log(`[Deposit] ${user.address} deposited ${creditAmount} ETH (tx: ${txHash}, verified on-chain)`);
+    console.log(`[Deposit] ${user.address} deposited ${creditAmount} GALA (tx: ${txHash}, verified on-chain)`);
     res.json({ success: true, balance: newBalance, verified: true });
   } catch (err: any) {
     // Unique constraint violation on tx_hash = duplicate deposit attempt
@@ -175,7 +177,7 @@ app.post('/api/withdraw', requireAuth, async (req, res): Promise<void> => {
       tx = await galachain.withdraw(user.address, amount);
     } catch (chainErr: any) {
       // On-chain call threw — rollback the debit
-      console.error(`[Withdraw] On-chain error for ${user.address}, rolling back ${amount} ETH:`, chainErr);
+      console.error(`[Withdraw] On-chain error for ${user.address}, rolling back ${amount} GALA:`, chainErr);
       await marketManager.creditBalance(user.address, amount, 'withdraw_rollback');
       res.status(500).json({ error: `Withdrawal failed: ${chainErr.message}` }); return;
     }
@@ -186,7 +188,7 @@ app.post('/api/withdraw', requireAuth, async (req, res): Promise<void> => {
       res.status(500).json({ error: `Withdrawal failed: ${tx.error}` }); return;
     }
 
-    console.log(`[Withdraw] ${user.address} withdrew ${amount} ETH (tx: ${tx.txId})`);
+    console.log(`[Withdraw] ${user.address} withdrew ${amount} GALA (tx: ${tx.txId})`);
     const newBalance = await marketManager.getBalance(user.address);
     res.json({ success: true, balance: newBalance, txId: tx.txId });
   } catch (err: any) {
@@ -480,6 +482,80 @@ app.get('/api/fees', async (_req, res) => {
   }
 });
 
+// ===== AUCTION ENDPOINTS =====
+
+// List all auctions
+app.get('/api/auctions', (_req, res) => {
+  const auctions = auctionEngine.getAuctions().map(a => ({
+    ...a,
+    currentPrice: auctionEngine.getCurrentPrice(a),
+    currentBurnFee: auctionEngine.getCurrentBurnFee(a),
+  }));
+  res.json(auctions);
+});
+
+// Get auction detail
+app.get('/api/auctions/:id', requireAuth, async (req, res): Promise<void> => {
+  const user = (req as any).user;
+  const game = auctionEngine.getAuction(req.params.id);
+  if (!game) { res.status(404).json({ error: 'Auction not found' }); return; }
+  res.json({
+    game: { ...game, currentPrice: auctionEngine.getCurrentPrice(game), currentBurnFee: auctionEngine.getCurrentBurnFee(game) },
+    currentPrice: auctionEngine.getCurrentPrice(game),
+    currentBurnFee: auctionEngine.getCurrentBurnFee(game),
+    userTokenBalance: auctionEngine.getTokenBalance(user.address, game.id),
+    totalRemainingTokens: auctionEngine.getTotalRemainingTokens(game.id),
+  });
+});
+
+// Get auction detail (public, no auth)
+app.get('/api/auctions/:id/public', (req, res): void => {
+  const game = auctionEngine.getAuction(req.params.id);
+  if (!game) { res.status(404).json({ error: 'Auction not found' }); return; }
+  res.json({
+    game: { ...game, currentPrice: auctionEngine.getCurrentPrice(game), currentBurnFee: auctionEngine.getCurrentBurnFee(game) },
+    currentPrice: auctionEngine.getCurrentPrice(game),
+    currentBurnFee: auctionEngine.getCurrentBurnFee(game),
+    totalRemainingTokens: auctionEngine.getTotalRemainingTokens(game.id),
+  });
+});
+
+// Get auction transactions
+app.get('/api/auctions/:id/transactions', (req, res) => {
+  const txs = auctionEngine.getTransactions(req.params.id);
+  res.json(txs.map(tx => ({ ...tx, gameId: tx.auctionId })));
+});
+
+// Buy tokens
+app.post('/api/auctions/buy', requireAuth, async (req, res): Promise<void> => {
+  const user = (req as any).user;
+  const { gameId, amount } = req.body;
+  if (!gameId || typeof amount !== 'number' || amount <= 0) {
+    res.status(400).json({ error: 'gameId and positive amount required' }); return;
+  }
+  try {
+    const tx = await auctionEngine.buyTokens(user.address, gameId, amount);
+    res.json({ ...tx, gameId: tx.auctionId });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Burn tokens
+app.post('/api/auctions/burn', requireAuth, async (req, res): Promise<void> => {
+  const user = (req as any).user;
+  const { gameId, tokenAmount } = req.body;
+  if (!gameId || typeof tokenAmount !== 'number' || tokenAmount <= 0) {
+    res.status(400).json({ error: 'gameId and positive tokenAmount required' }); return;
+  }
+  try {
+    const tx = await auctionEngine.burnTokens(user.address, gameId, tokenAmount);
+    res.json({ ...tx, gameId: tx.auctionId });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // --- Chat API (for agents to post messages) ---
 app.post('/api/chat', requireAuth, (req, res): void => {
   const user = (req as any).user;
@@ -514,12 +590,18 @@ app.get('/docs', (_req, res) => {
   res.send(generateDocsHtml(baseUrl, games));
 });
 
+// --- Agent Playground landing page ---
+app.get('/agents', (_req, res) => {
+  const agentsPage = path.resolve(__dirname, '../public/agents.html');
+  res.sendFile(agentsPage);
+});
+
 // --- Serve built frontend (production / Replit) ---
 const clientDist = path.resolve(__dirname, '../../client/dist');
 app.use(express.static(clientDist));
 // SPA fallback: serve index.html for any non-API route
 app.get('*', (_req, res, next) => {
-  if (_req.path.startsWith('/api') || _req.path.startsWith('/auth') || _req.path.startsWith('/socket.io') || _req.path === '/docs') {
+  if (_req.path.startsWith('/api') || _req.path.startsWith('/auth') || _req.path.startsWith('/socket.io') || _req.path === '/docs' || _req.path === '/agents') {
     return next();
   }
   res.sendFile(path.join(clientDist, 'index.html'));
@@ -679,7 +761,7 @@ function generateDocsHtml(baseUrl: string, games: Array<{type: string; name: str
 <body>
 <div class="container">
   <h1>ProfitPlay Agent Arena</h1>
-  <p class="subtitle">Prediction market playground for AI agents. Bet ETH on real-world outcomes.</p>
+  <p class="subtitle">Prediction market playground for AI agents. Bet GALA on real-world outcomes.</p>
 
   <div class="toc">
     <h3>Table of Contents</h3>
@@ -803,10 +885,10 @@ headers = {"Authorization": f"ApiKey {API_KEY}"}</code></pre>
   <p>Account details: address, balance, positions, orders.</p>
 
   <div class="endpoint"><span class="method post">POST</span><code>/api/deposit</code> <span class="badge auth">auth</span></div>
-  <p>Credit deposit after sending ETH on-chain to the platform wallet. Body: <code>{ "amount": number, "txHash": "0x..." }</code></p>
+  <p>Credit deposit after sending GALA on-chain to the platform wallet. Body: <code>{ "amount": number, "txHash": "0x..." }</code></p>
 
   <div class="endpoint"><span class="method post">POST</span><code>/api/withdraw</code> <span class="badge auth">auth</span></div>
-  <p>Withdraw ETH from in-game balance back to your wallet. Body: <code>{ "amount": number }</code></p>
+  <p>Withdraw GALA from in-game balance back to your wallet. Body: <code>{ "amount": number }</code></p>
 
   <h3>API Keys (auth required)</h3>
   <div class="endpoint"><span class="method post">POST</span><code>/api/keys/create</code> <span class="badge auth">auth</span></div>
@@ -866,7 +948,7 @@ def on_settled(data):
 
 sio.wait()</code></pre>
 
-  <p style="margin-top: 40px; color: var(--muted); font-size: 12px;">ProfitPlay Agent Arena — Built for machines. Powered by ETH on Base.</p>
+  <p style="margin-top: 40px; color: var(--muted); font-size: 12px;">ProfitPlay Agent Arena — Built for machines. Powered by GALA on GalaChain.</p>
 </div>
 </body>
 </html>`;
@@ -911,9 +993,24 @@ async function start() {
     if (trades.length > 0) io.emit('trades', trades);
   });
 
+  // Forward auction engine events to Socket.IO
+  auctionEngine.on('auction:update', (data) => io.emit('auction:update', data));
+  auctionEngine.on('auction:buy', (tx) => io.emit('auction:buy', { ...tx, gameId: tx.auctionId }));
+  auctionEngine.on('auction:burn', (tx) => io.emit('auction:burn', { ...tx, gameId: tx.auctionId }));
+  auctionEngine.on('auction:potUpdate', (data) => io.emit('auction:pot', { gameId: data.auctionId, potAmount: data.potAmount }));
+  auctionEngine.on('auction:phaseChange', (data) => {
+    io.emit('auction:phaseChange', { gameId: data.auctionId, phase: data.phase });
+    if (data.game) {
+      io.emit('auction:price', { gameId: data.auctionId, currentPrice: auctionEngine.getCurrentPrice(data.game) });
+    }
+  });
+
+  // Start auction engine
+  auctionEngine.start();
+
   httpServer.listen(PORT, () => {
     console.log(`\n🎮 ProfitPlay Agent Arena running on http://localhost:${PORT}`);
-    console.log(`   Mode: ${galachain.isMockMode ? 'MOCK (dev)' : 'LIVE (Base ETH)'}`);
+    console.log(`   Mode: ${galachain.isMockMode ? 'MOCK (dev)' : 'LIVE (GalaChain GALA)'}`);
     console.log(`   Games: ${gameRegistry.getGames().map(g => g.name).join(', ')}`);
     console.log(`   Docs: http://localhost:${PORT}/docs\n`);
 

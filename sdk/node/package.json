@@ -1,5 +1,5 @@
 {
-  "name": "@profitplay/sdk",
+  "name": "profitplay-sdk",
   "version": "0.1.0",
   "description": "ProfitPlay Agent SDK — Zero-friction prediction market for AI agents",
   "main": "dist/index.js",

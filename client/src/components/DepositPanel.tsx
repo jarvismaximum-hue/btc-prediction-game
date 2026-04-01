@@ -3,15 +3,15 @@ import { apiFetch } from '../services/api';
 
 interface Props {
   onChainBalance: number;
-  mainnetBalance: number;
+  mainnetBalance?: number;
   ethUsdPrice: number;
   gameBalance: number;
   depositToGame: (amount: number) => Promise<{ success: boolean; txHash?: string; error?: string }>;
   onBalanceChanged: () => void;
 }
 
-export function DepositPanel({ onChainBalance, mainnetBalance, ethUsdPrice, gameBalance, depositToGame, onBalanceChanged }: Props) {
-  const [amount, setAmount] = useState<number>(0.01);
+export function DepositPanel({ onChainBalance, ethUsdPrice, gameBalance, depositToGame, onBalanceChanged }: Props) {
+  const [amount, setAmount] = useState<number>(10);
   const [depositing, setDepositing] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +24,7 @@ export function DepositPanel({ onChainBalance, mainnetBalance, ethUsdPrice, game
     setSuccess(null);
 
     try {
-      // Send ETH from user wallet to platform wallet via MetaMask
+      // Transfer GALA from user wallet to platform wallet via GalaChain
       const result = await depositToGame(amount);
       if (!result.success) {
         setError(result.error || 'Deposit failed');
@@ -43,7 +43,7 @@ export function DepositPanel({ onChainBalance, mainnetBalance, ethUsdPrice, game
         return;
       }
 
-      setSuccess(`Deposited ${amount} ETH`);
+      setSuccess(`Deposited ${amount} GALA`);
       onBalanceChanged();
       setTimeout(() => setSuccess(null), 3000);
     } catch (e: any) {
@@ -71,7 +71,7 @@ export function DepositPanel({ onChainBalance, mainnetBalance, ethUsdPrice, game
         return;
       }
 
-      setSuccess(`Withdrew ${amount} ETH`);
+      setSuccess(`Withdrew ${amount} GALA`);
       onBalanceChanged();
       setTimeout(() => setSuccess(null), 3000);
     } catch (e: any) {
@@ -90,31 +90,25 @@ export function DepositPanel({ onChainBalance, mainnetBalance, ethUsdPrice, game
       </div>
       {gameBalance <= 0 && (
         <div className="deposit-prompt">
-          Deposit ETH from your wallet to start playing
+          Deposit GALA from your wallet to start playing
         </div>
       )}
       <div className="wallet-balances">
         <div className="balance-row">
-          <span>Base (deposit-ready)</span>
-          <span>{onChainBalance.toFixed(6)} ETH{ethUsdPrice > 0 ? ` ($${(onChainBalance * ethUsdPrice).toFixed(2)})` : ''}</span>
+          <span>GalaChain (deposit-ready)</span>
+          <span>{onChainBalance.toFixed(2)} GALA{ethUsdPrice > 0 ? ` ($${(onChainBalance * ethUsdPrice).toFixed(2)})` : ''}</span>
         </div>
-        {mainnetBalance > 0.0001 && (
-          <div className="balance-row">
-            <span>Mainnet</span>
-            <span>{mainnetBalance.toFixed(6)} ETH{ethUsdPrice > 0 ? ` ($${(mainnetBalance * ethUsdPrice).toFixed(2)})` : ''}</span>
-          </div>
-        )}
         <div className="balance-row">
           <span>In-game</span>
-          <span>{gameBalance.toFixed(6)} ETH{ethUsdPrice > 0 ? ` ($${(gameBalance * ethUsdPrice).toFixed(2)})` : ''}</span>
+          <span>{gameBalance.toFixed(2)} GALA{ethUsdPrice > 0 ? ` ($${(gameBalance * ethUsdPrice).toFixed(2)})` : ''}</span>
         </div>
       </div>
       <div className="input-group">
-        <label>Amount (ETH)</label>
+        <label>Amount (GALA)</label>
         <input
           type="number"
           min={1}
-          step={0.001}
+          step={1}
           value={amount}
           onChange={e => setAmount(Math.max(0, parseFloat(e.target.value) || 0))}
           disabled={busy}

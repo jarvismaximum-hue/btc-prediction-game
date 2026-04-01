@@ -136,8 +136,8 @@ function BetForm({ game, balance, onOrderPlaced }: { game: GameInfo; balance: nu
         </div>
       </div>
       <div className="grid-bet-cost">
-        <span>Total: {totalCost.toFixed(4)} ETH</span>
-        <span className="grid-bet-payout">Win: {shares.toFixed(4)} ETH</span>
+        <span>Total: {totalCost.toFixed(4)} GALA</span>
+        <span className="grid-bet-payout">Win: {shares.toFixed(4)} GALA</span>
       </div>
       <button
         className={`grid-bet-submit ${side === 'UP' ? 'up' : 'down'}`}

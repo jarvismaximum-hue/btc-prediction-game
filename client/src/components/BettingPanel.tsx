@@ -137,29 +137,29 @@ export function BettingPanel({ market, isAuthenticated, balance, onOrderPlaced, 
           value={price}
           onChange={e => setPrice(parseFloat(e.target.value))}
         />
-        <div className="price-display">{price.toFixed(4)} ETH/share</div>
+        <div className="price-display">{price.toFixed(4)} GALA/share</div>
       </div>
 
       <div className="cost-breakdown">
         <div className="cost-row">
           <span>Cost</span>
-          <span>{estimatedCost.toFixed(6)} ETH</span>
+          <span>{estimatedCost.toFixed(6)} GALA</span>
         </div>
         <div className="cost-row">
           <span>Taker Fee</span>
-          <span>{takerFee.toFixed(6)} ETH</span>
+          <span>{takerFee.toFixed(6)} GALA</span>
         </div>
         <div className="cost-row">
           <span>Platform Fee (5%)</span>
-          <span>{platformFee.toFixed(6)} ETH</span>
+          <span>{platformFee.toFixed(6)} GALA</span>
         </div>
         <div className="cost-row total">
           <span>Total</span>
-          <span>{totalCost.toFixed(6)} ETH</span>
+          <span>{totalCost.toFixed(6)} GALA</span>
         </div>
         <div className="cost-row potential">
           <span>Potential Payout</span>
-          <span className="payout">{shares.toFixed(6)} ETH</span>
+          <span className="payout">{shares.toFixed(6)} GALA</span>
         </div>
       </div>
 
@@ -175,17 +175,17 @@ export function BettingPanel({ market, isAuthenticated, balance, onOrderPlaced, 
           : market?.status !== 'trading'
           ? 'Market Closed'
           : balance <= 0
-          ? 'Deposit ETH to Bet'
+          ? 'Deposit GALA to Bet'
           : balance < totalCost
           ? 'Insufficient Balance'
-          : `Bet ${side} - ${totalCost.toFixed(6)} ETH`}
+          : `Bet ${side} - ${totalCost.toFixed(6)} GALA`}
       </button>
 
       {error && <div className="error-text">{error}</div>}
       {success && <div className="success-text">{success}</div>}
 
       <div className="balance-display">
-        Balance: <strong>{balance.toFixed(6)} ETH</strong>
+        Balance: <strong>{balance.toFixed(6)} GALA</strong>
       </div>
     </div>
   );
